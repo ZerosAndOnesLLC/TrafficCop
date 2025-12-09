@@ -9,14 +9,95 @@ use crate::service::ServiceManager;
 use anyhow::Result;
 use arc_swap::ArcSwap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::signal;
-use tracing::{error, info};
+use tracing::{error, info, warn};
+
+/// Tracks active connections for graceful shutdown
+pub struct ConnectionTracker {
+    active: AtomicUsize,
+    draining: AtomicBool,
+}
+
+impl ConnectionTracker {
+    pub fn new() -> Self {
+        Self {
+            active: AtomicUsize::new(0),
+            draining: AtomicBool::new(false),
+        }
+    }
+
+    /// Increment active connection count, returns false if draining
+    #[inline]
+    pub fn connection_start(&self) -> bool {
+        if self.draining.load(Ordering::Acquire) {
+            return false;
+        }
+        self.active.fetch_add(1, Ordering::Relaxed);
+        true
+    }
+
+    /// Decrement active connection count
+    #[inline]
+    pub fn connection_end(&self) {
+        self.active.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    /// Get current active connection count
+    #[inline]
+    pub fn active_count(&self) -> usize {
+        self.active.load(Ordering::Relaxed)
+    }
+
+    /// Start draining - reject new connections
+    pub fn start_drain(&self) {
+        self.draining.store(true, Ordering::Release);
+    }
+
+    /// Check if draining
+    #[inline]
+    pub fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::Acquire)
+    }
+
+    /// Wait for all connections to finish, with timeout
+    pub async fn wait_for_drain(&self, timeout: Duration) {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let check_interval = Duration::from_millis(100);
+
+        loop {
+            let count = self.active_count();
+            if count == 0 {
+                info!("All connections drained");
+                return;
+            }
+
+            if tokio::time::Instant::now() >= deadline {
+                warn!(
+                    "Drain timeout reached with {} active connections remaining",
+                    count
+                );
+                return;
+            }
+
+            tokio::time::sleep(check_interval).await;
+        }
+    }
+}
+
+impl Default for ConnectionTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Shared state that can be hot-reloaded
 pub struct SharedState {
     pub router: ArcSwap<Router>,
     pub services: ArcSwap<ServiceManager>,
+    pub connections: ConnectionTracker,
 }
 
 impl SharedState {
@@ -24,6 +105,7 @@ impl SharedState {
         Self {
             router: ArcSwap::from_pointee(Router::from_config(config)),
             services: ArcSwap::from_pointee(ServiceManager::new(config)),
+            connections: ConnectionTracker::new(),
         }
     }
 
@@ -123,10 +205,24 @@ impl Server {
         // Wait for shutdown signal
         shutdown_signal().await;
 
-        info!("Shutdown signal received, stopping server");
+        info!("Shutdown signal received, starting graceful drain");
 
         // Stop watcher
         watcher_handle.abort();
+
+        // Start draining - reject new connections
+        self.state.connections.start_drain();
+
+        // Wait for existing connections to complete (30 second timeout)
+        let drain_timeout = Duration::from_secs(30);
+        let active = self.state.connections.active_count();
+        if active > 0 {
+            info!(
+                "Waiting for {} active connections to drain (timeout: {:?})",
+                active, drain_timeout
+            );
+            self.state.connections.wait_for_drain(drain_timeout).await;
+        }
 
         // Cancel all listeners
         for handle in handles {

@@ -89,12 +89,18 @@ impl Listener {
             let connection_is_tls = tls_acceptor.is_some();
 
             tokio::spawn(async move {
+                // Check if draining - reject new connections
+                if !state.connections.connection_start() {
+                    debug!("Rejecting connection from {} - server draining", remote_addr);
+                    return;
+                }
+
                 if let Some(acceptor) = tls_acceptor {
                     // TLS connection
                     match acceptor.accept(stream).await {
                         Ok(tls_stream) => {
                             let io = TokioIo::new(tls_stream);
-                            Self::serve_connection(io, remote_addr, &entrypoint_name, state, proxy, connection_is_tls).await;
+                            Self::serve_connection(io, remote_addr, &entrypoint_name, Arc::clone(&state), proxy, connection_is_tls).await;
                         }
                         Err(e) => {
                             debug!("TLS handshake failed from {}: {}", remote_addr, e);
@@ -103,8 +109,11 @@ impl Listener {
                 } else {
                     // Plain HTTP connection
                     let io = TokioIo::new(stream);
-                    Self::serve_connection(io, remote_addr, &entrypoint_name, state, proxy, connection_is_tls).await;
+                    Self::serve_connection(io, remote_addr, &entrypoint_name, Arc::clone(&state), proxy, connection_is_tls).await;
                 }
+
+                // Mark connection as done
+                state.connections.connection_end();
             });
         }
     }

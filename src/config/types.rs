@@ -61,6 +61,46 @@ pub struct Service {
 
     #[serde(default)]
     pub health_check: Option<HealthCheckConfig>,
+
+    #[serde(default)]
+    pub timeouts: TimeoutConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeoutConfig {
+    /// Connection timeout in milliseconds
+    #[serde(default = "default_connect_timeout")]
+    pub connect_ms: u64,
+
+    /// Request timeout in milliseconds (total time for request)
+    #[serde(default = "default_request_timeout")]
+    pub request_ms: u64,
+
+    /// Idle timeout for connection pool in seconds
+    #[serde(default = "default_idle_timeout")]
+    pub idle_seconds: u64,
+}
+
+impl Default for TimeoutConfig {
+    fn default() -> Self {
+        Self {
+            connect_ms: default_connect_timeout(),
+            request_ms: default_request_timeout(),
+            idle_seconds: default_idle_timeout(),
+        }
+    }
+}
+
+fn default_connect_timeout() -> u64 {
+    5000 // 5 seconds
+}
+
+fn default_request_timeout() -> u64 {
+    30000 // 30 seconds
+}
+
+fn default_idle_timeout() -> u64 {
+    90
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

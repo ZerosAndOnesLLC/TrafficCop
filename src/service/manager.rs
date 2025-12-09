@@ -1,5 +1,5 @@
 use crate::balancer::LoadBalancer;
-use crate::config::{Config, Service};
+use crate::config::{Config, Service, TimeoutConfig};
 use crate::health::{HealthChecker, HealthStatus};
 use crate::pool::ConnectionPool;
 use dashmap::DashMap;
@@ -16,6 +16,7 @@ pub struct ServiceState {
     pub config: Service,
     pub balancer: LoadBalancer,
     pub health_statuses: Vec<Arc<HealthStatus>>,
+    pub timeouts: TimeoutConfig,
 }
 
 impl ServiceManager {
@@ -37,6 +38,7 @@ impl ServiceManager {
                     config: service_config.clone(),
                     balancer,
                     health_statuses,
+                    timeouts: service_config.timeouts.clone(),
                 },
             );
 

@@ -7,12 +7,17 @@ A high-performance reverse proxy and load balancer written in Rust, designed to 
 - **High Performance**: Built with Rust for maximum throughput and minimal latency
 - **Zero GC Pauses**: No garbage collector means consistent, predictable response times
 - **HTTP/1.1 & HTTP/2**: Automatic protocol detection with ALPN negotiation for TLS
+- **WebSocket Proxying**: Full WebSocket upgrade and bidirectional streaming support
 - **Hot Config Reload**: Configuration changes applied without restart or dropping connections
+- **Graceful Shutdown**: Connection draining with configurable timeout
 - **Load Balancing**: Round-robin, smooth weighted round-robin, least connections, random
 - **Health Checks**: HTTP health checks with configurable thresholds
 - **Circuit Breaker**: Automatic backend isolation on failures with recovery
 - **TLS Termination**: Native TLS support via rustls (no OpenSSL dependency)
-- **Middleware Pipeline**: Rate limiting, headers, retry with exponential backoff
+- **Request Timeouts**: Configurable connect and request timeouts per service
+- **Middleware Pipeline**: Rate limiting, headers, retry with exponential backoff, compression
+- **Compression**: gzip and brotli response compression
+- **Access Logging**: Structured JSON access logs
 - **Metrics**: Prometheus-compatible metrics endpoint
 - **Traefik-Compatible Rules**: Familiar rule syntax for routing
 

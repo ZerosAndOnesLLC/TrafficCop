@@ -8,8 +8,9 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use std::net::SocketAddr;
-use std::time::Instant;
-use tracing::{debug, error};
+use std::time::{Duration, Instant};
+use tokio::time::timeout;
+use tracing::{debug, error, warn};
 
 fn hop_by_hop_headers() -> &'static [HeaderName] {
     static HEADERS: &[HeaderName] = &[
@@ -111,9 +112,16 @@ impl ProxyHandler {
             }
         };
 
+        let timeouts = service.timeouts.clone();
         drop(service);
 
         debug!("Selected backend: {}", backend_url);
+
+        // Check for WebSocket upgrade
+        if super::websocket::is_websocket_upgrade(&req) {
+            debug!("Handling WebSocket upgrade to {}", backend_url);
+            return super::websocket::handle_websocket_upgrade(req, &backend_url, remote_addr).await;
+        }
 
         // Build the proxied request
         let backend_uri = match Self::build_backend_uri(&backend_url, req.uri()) {
@@ -141,9 +149,12 @@ impl ProxyHandler {
                 }
             };
 
-        // Forward the request to the backend
-        match self.client.request(proxied_req).await {
-            Ok(response) => {
+        // Forward the request to the backend with timeout
+        let request_timeout = Duration::from_millis(timeouts.request_ms);
+        let backend_future = self.client.request(proxied_req);
+
+        match timeout(request_timeout, backend_future).await {
+            Ok(Ok(response)) => {
                 let status = response.status();
                 let elapsed = start.elapsed();
                 debug!(
@@ -161,13 +172,21 @@ impl ProxyHandler {
 
                 Ok(response)
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 let elapsed = start.elapsed();
                 error!(
                     "Backend request failed in {:?}: {} -> {}",
                     elapsed, backend_url, e
                 );
                 Ok(Self::error_response(StatusCode::BAD_GATEWAY, "Bad Gateway"))
+            }
+            Err(_) => {
+                let elapsed = start.elapsed();
+                warn!(
+                    "Request timeout after {:?} (limit: {:?}): {}",
+                    elapsed, request_timeout, backend_url
+                );
+                Ok(Self::error_response(StatusCode::GATEWAY_TIMEOUT, "Gateway Timeout"))
             }
         }
     }
