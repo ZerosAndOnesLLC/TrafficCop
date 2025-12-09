@@ -1,0 +1,73 @@
+[package]
+name = "traffic_management"
+version = "0.2.0"
+edition = "2021"
+description = "High-performance reverse proxy and load balancer"
+license = "MIT"
+repository = "https://github.com/yourusername/traffic_management"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http-body-util = "0.1"
+
+# TLS
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
+
+# Configuration
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+toml = "0.8"
+
+# Concurrency
+dashmap = "6"
+arc-swap = "1"
+parking_lot = "0.12"
+
+# Metrics
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
+
+# Logging/Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utilities
+thiserror = "2"
+anyhow = "1"
+bytes = "1"
+futures = "0.3"
+pin-project-lite = "0.2"
+notify = "7"
+regex = "1"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+criterion = "0.5"
+tokio-test = "0.4"
+reqwest = { version = "0.12", features = ["json"] }
+
+[[bench]]
+name = "proxy_benchmark"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.bench]
+opt-level = 3
+lto = "thin"

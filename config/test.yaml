@@ -1,0 +1,27 @@
+# Test configuration for local development
+# Run with: cargo run -- -c config/test.yaml
+
+entrypoints:
+  web:
+    address: "127.0.0.1:8080"
+
+services:
+  httpbin:
+    load_balancer:
+      strategy: round_robin
+    servers:
+      - url: "http://httpbin.org"
+        weight: 1
+
+  echo:
+    load_balancer:
+      strategy: round_robin
+    servers:
+      - url: "http://httpbin.org"
+        weight: 1
+
+routers:
+  httpbin-router:
+    rule: "PathPrefix(`/`)"
+    service: httpbin
+    priority: 1

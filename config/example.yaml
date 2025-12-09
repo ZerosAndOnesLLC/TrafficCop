@@ -1,0 +1,132 @@
+# Traffic Management Configuration Example
+# High-performance reverse proxy and load balancer
+
+# Entrypoints define the addresses the proxy listens on
+entrypoints:
+  web:
+    address: "0.0.0.0:80"
+
+  websecure:
+    address: "0.0.0.0:443"
+    tls:
+      cert_file: "/etc/certs/server.crt"
+      key_file: "/etc/certs/server.key"
+
+# Services define backend server pools
+services:
+  api:
+    load_balancer:
+      strategy: round_robin
+      sticky:
+        cookie_name: "SERVERID"
+        ttl_seconds: 3600
+    servers:
+      - url: "http://10.0.0.1:8080"
+        weight: 1
+      - url: "http://10.0.0.2:8080"
+        weight: 1
+      - url: "http://10.0.0.3:8080"
+        weight: 1
+    health_check:
+      path: "/health"
+      interval_seconds: 10
+      timeout_seconds: 5
+      healthy_threshold: 2
+      unhealthy_threshold: 3
+
+  webapp:
+    load_balancer:
+      strategy: least_conn
+    servers:
+      - url: "http://10.0.1.1:3000"
+        weight: 1
+      - url: "http://10.0.1.2:3000"
+        weight: 1
+    health_check:
+      path: "/"
+      interval_seconds: 15
+
+  static:
+    servers:
+      - url: "http://10.0.2.1:80"
+
+# Routers define how requests are matched to services
+routers:
+  api-router:
+    entrypoints:
+      - websecure
+    rule: "Host(`api.example.com`) && PathPrefix(`/v1`)"
+    service: api
+    middlewares:
+      - rate-limit
+      - auth-headers
+    priority: 100
+
+  api-public:
+    entrypoints:
+      - web
+      - websecure
+    rule: "Host(`api.example.com`) && PathPrefix(`/public`)"
+    service: api
+    priority: 90
+
+  webapp-router:
+    entrypoints:
+      - web
+      - websecure
+    rule: "Host(`app.example.com`)"
+    service: webapp
+    middlewares:
+      - compress
+    priority: 50
+
+  static-router:
+    entrypoints:
+      - web
+    rule: "Host(`static.example.com`) || PathPrefix(`/static`)"
+    service: static
+    priority: 10
+
+# Middlewares define request/response transformations
+middlewares:
+  rate-limit:
+    rate_limit:
+      average: 100
+      burst: 50
+      period_seconds: 1
+
+  auth-headers:
+    headers:
+      request_headers:
+        X-Request-ID: "${uuid}"
+      response_headers:
+        X-Frame-Options: "DENY"
+        X-Content-Type-Options: "nosniff"
+      remove_response_headers:
+        - "Server"
+
+  compress:
+    compress:
+      min_response_body_bytes: 1024
+
+  retry:
+    retry:
+      attempts: 3
+      initial_interval_ms: 100
+
+  circuit-breaker:
+    circuit_breaker:
+      failure_threshold: 5
+      recovery_timeout_seconds: 30
+
+# TLS configuration
+tls:
+  certificates:
+    - cert_file: "/etc/certs/server.crt"
+      key_file: "/etc/certs/server.key"
+
+  # ACME (Let's Encrypt) configuration
+  # acme:
+  #   email: "admin@example.com"
+  #   storage: "/etc/acme/acme.json"
+  #   ca_server: "https://acme-v02.api.letsencrypt.org/directory"

@@ -1,0 +1,301 @@
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    #[serde(default)]
+    pub entrypoints: HashMap<String, Entrypoint>,
+
+    #[serde(default)]
+    pub services: HashMap<String, Service>,
+
+    #[serde(default)]
+    pub routers: HashMap<String, Router>,
+
+    #[serde(default)]
+    pub middlewares: HashMap<String, MiddlewareConfig>,
+
+    #[serde(default)]
+    pub tls: TlsConfig,
+
+    #[serde(default)]
+    pub metrics: Option<MetricsConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsConfig {
+    #[serde(default = "default_metrics_address")]
+    pub address: String,
+}
+
+fn default_metrics_address() -> String {
+    "0.0.0.0:9090".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Entrypoint {
+    pub address: String,
+
+    #[serde(default)]
+    pub tls: Option<EntrypointTls>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntrypointTls {
+    #[serde(default)]
+    pub cert_resolver: Option<String>,
+
+    #[serde(default)]
+    pub cert_file: Option<String>,
+
+    #[serde(default)]
+    pub key_file: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Service {
+    #[serde(default)]
+    pub load_balancer: LoadBalancerConfig,
+
+    pub servers: Vec<ServerConfig>,
+
+    #[serde(default)]
+    pub health_check: Option<HealthCheckConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LoadBalancerConfig {
+    #[serde(default)]
+    pub strategy: LoadBalancerStrategy,
+
+    #[serde(default)]
+    pub sticky: Option<StickyConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LoadBalancerStrategy {
+    #[default]
+    RoundRobin,
+    Weighted,
+    LeastConn,
+    Random,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StickyConfig {
+    pub cookie_name: String,
+
+    #[serde(default = "default_cookie_ttl")]
+    pub ttl_seconds: u64,
+}
+
+fn default_cookie_ttl() -> u64 {
+    3600
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerConfig {
+    pub url: String,
+
+    #[serde(default = "default_weight")]
+    pub weight: u32,
+}
+
+fn default_weight() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthCheckConfig {
+    #[serde(default = "default_health_path")]
+    pub path: String,
+
+    #[serde(default = "default_health_interval")]
+    pub interval_seconds: u64,
+
+    #[serde(default = "default_health_timeout")]
+    pub timeout_seconds: u64,
+
+    #[serde(default = "default_health_threshold")]
+    pub healthy_threshold: u32,
+
+    #[serde(default = "default_health_threshold")]
+    pub unhealthy_threshold: u32,
+}
+
+fn default_health_path() -> String {
+    "/health".to_string()
+}
+
+fn default_health_interval() -> u64 {
+    10
+}
+
+fn default_health_timeout() -> u64 {
+    5
+}
+
+fn default_health_threshold() -> u32 {
+    3
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Router {
+    #[serde(default)]
+    pub entrypoints: Vec<String>,
+
+    pub rule: String,
+
+    pub service: String,
+
+    #[serde(default)]
+    pub middlewares: Vec<String>,
+
+    #[serde(default)]
+    pub priority: i32,
+
+    #[serde(default)]
+    pub tls: Option<RouterTls>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouterTls {
+    #[serde(default)]
+    pub cert_resolver: Option<String>,
+
+    #[serde(default)]
+    pub domains: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MiddlewareConfig {
+    RateLimit(RateLimitConfig),
+    Headers(HeadersConfig),
+    BasicAuth(BasicAuthConfig),
+    ForwardAuth(ForwardAuthConfig),
+    Compress(CompressConfig),
+    Retry(RetryConfig),
+    CircuitBreaker(CircuitBreakerConfig),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitConfig {
+    pub average: u64,
+
+    #[serde(default)]
+    pub burst: u64,
+
+    #[serde(default = "default_rate_period")]
+    pub period_seconds: u64,
+}
+
+fn default_rate_period() -> u64 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeadersConfig {
+    #[serde(default)]
+    pub request_headers: HashMap<String, String>,
+
+    #[serde(default)]
+    pub response_headers: HashMap<String, String>,
+
+    #[serde(default)]
+    pub remove_request_headers: Vec<String>,
+
+    #[serde(default)]
+    pub remove_response_headers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BasicAuthConfig {
+    pub users: Vec<String>, // format: "user:password_hash"
+
+    #[serde(default)]
+    pub realm: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForwardAuthConfig {
+    pub address: String,
+
+    #[serde(default)]
+    pub auth_response_headers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressConfig {
+    #[serde(default = "default_compress_min_size")]
+    pub min_response_body_bytes: u64,
+}
+
+fn default_compress_min_size() -> u64 {
+    1024
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryConfig {
+    #[serde(default = "default_retry_attempts")]
+    pub attempts: u32,
+
+    #[serde(default = "default_retry_initial_interval")]
+    pub initial_interval_ms: u64,
+}
+
+fn default_retry_attempts() -> u32 {
+    3
+}
+
+fn default_retry_initial_interval() -> u64 {
+    100
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CircuitBreakerConfig {
+    #[serde(default = "default_cb_threshold")]
+    pub failure_threshold: u32,
+
+    #[serde(default = "default_cb_timeout")]
+    pub recovery_timeout_seconds: u64,
+}
+
+fn default_cb_threshold() -> u32 {
+    5
+}
+
+fn default_cb_timeout() -> u64 {
+    30
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TlsConfig {
+    #[serde(default)]
+    pub certificates: Vec<CertificateConfig>,
+
+    #[serde(default)]
+    pub acme: Option<AcmeConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CertificateConfig {
+    pub cert_file: String,
+    pub key_file: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcmeConfig {
+    pub email: String,
+
+    #[serde(default = "default_acme_storage")]
+    pub storage: String,
+
+    #[serde(default)]
+    pub ca_server: Option<String>,
+}
+
+fn default_acme_storage() -> String {
+    "acme.json".to_string()
+}
