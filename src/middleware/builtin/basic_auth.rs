@@ -170,7 +170,10 @@ mod tests {
                 "admin:secret123".to_string(),
                 "user:password".to_string(),
             ],
+            users_file: None,
             realm: Some("Test Realm".to_string()),
+            header_field: None,
+            remove_header: false,
         }
     }
 

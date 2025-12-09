@@ -116,13 +116,15 @@ impl RateLimitMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Duration as ConfigDuration;
 
     #[test]
     fn test_rate_limit_allows_within_limit() {
         let config = RateLimitConfig {
             average: 10,
             burst: 10,
-            period_seconds: 1,
+            period: ConfigDuration::from_secs(1),
+            source_criterion: None,
         };
         let limiter = RateLimitMiddleware::new(config);
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
@@ -138,7 +140,8 @@ mod tests {
         let config = RateLimitConfig {
             average: 1,
             burst: 2,
-            period_seconds: 1,
+            period: ConfigDuration::from_secs(1),
+            source_criterion: None,
         };
         let limiter = RateLimitMiddleware::new(config);
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
