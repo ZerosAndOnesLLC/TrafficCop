@@ -1,11 +1,14 @@
 use crate::config::Entrypoint;
 use crate::proxy::ProxyHandler;
 use crate::server::SharedState;
-use crate::tls::TlsAcceptor;
+use crate::tls::{try_handle_challenge, TlsAcceptor};
 use anyhow::{Context, Result};
+use http_body_util::BodyExt;
 use hyper::service::service_fn;
+use hyper::Request;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as AutoBuilder;
+use rustls::server::ResolvesServerCert;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -27,21 +30,8 @@ impl Listener {
         state: Arc<SharedState>,
         proxy: Arc<ProxyHandler>,
     ) -> Self {
-        // Build TLS acceptor if TLS is configured
-        let tls_acceptor = if let Some(ref tls_config) = entrypoint.tls {
-            match TlsAcceptor::from_entrypoint_tls(tls_config) {
-                Ok(acceptor) => {
-                    info!("TLS enabled for entrypoint '{}'", name);
-                    Some(TokioTlsAcceptor::from(acceptor.get_config()))
-                }
-                Err(e) => {
-                    error!("Failed to configure TLS for entrypoint '{}': {}", name, e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        // Build TLS acceptor
+        let tls_acceptor = Self::build_tls_acceptor(&name, &entrypoint, &state);
 
         Self {
             name,
@@ -50,6 +40,50 @@ impl Listener {
             proxy,
             tls_acceptor,
         }
+    }
+
+    fn build_tls_acceptor(
+        name: &str,
+        entrypoint: &Entrypoint,
+        state: &SharedState,
+    ) -> Option<TokioTlsAcceptor> {
+        let tls_config = entrypoint.tls.as_ref()?;
+
+        // Check if we should use ACME/SNI resolver
+        if tls_config.cert_resolver.is_some() {
+            // Use SNI-based certificate resolver from shared state
+            if let Some(ref resolver) = state.cert_resolver {
+                match TlsAcceptor::from_resolver(Arc::clone(resolver) as Arc<dyn ResolvesServerCert>) {
+                    Ok(acceptor) => {
+                        info!("TLS enabled for entrypoint '{}' (SNI resolver)", name);
+                        return Some(TokioTlsAcceptor::from(acceptor.get_config()));
+                    }
+                    Err(e) => {
+                        error!("Failed to configure SNI TLS for '{}': {}", name, e);
+                    }
+                }
+            } else {
+                error!(
+                    "Entrypoint '{}' requests cert_resolver but ACME is not configured",
+                    name
+                );
+            }
+        }
+
+        // Fall back to static cert files
+        if tls_config.cert_file.is_some() && tls_config.key_file.is_some() {
+            match TlsAcceptor::from_entrypoint_tls(tls_config) {
+                Ok(acceptor) => {
+                    info!("TLS enabled for entrypoint '{}' (static cert)", name);
+                    return Some(TokioTlsAcceptor::from(acceptor.get_config()));
+                }
+                Err(e) => {
+                    error!("Failed to configure TLS for '{}': {}", name, e);
+                }
+            }
+        }
+
+        None
     }
 
     pub async fn serve(&self) -> Result<()> {
@@ -100,7 +134,15 @@ impl Listener {
                     match acceptor.accept(stream).await {
                         Ok(tls_stream) => {
                             let io = TokioIo::new(tls_stream);
-                            Self::serve_connection(io, remote_addr, &entrypoint_name, Arc::clone(&state), proxy, connection_is_tls).await;
+                            Self::serve_connection(
+                                io,
+                                remote_addr,
+                                &entrypoint_name,
+                                Arc::clone(&state),
+                                proxy,
+                                connection_is_tls,
+                            )
+                            .await;
                         }
                         Err(e) => {
                             debug!("TLS handshake failed from {}: {}", remote_addr, e);
@@ -109,7 +151,15 @@ impl Listener {
                 } else {
                     // Plain HTTP connection
                     let io = TokioIo::new(stream);
-                    Self::serve_connection(io, remote_addr, &entrypoint_name, Arc::clone(&state), proxy, connection_is_tls).await;
+                    Self::serve_connection(
+                        io,
+                        remote_addr,
+                        &entrypoint_name,
+                        Arc::clone(&state),
+                        proxy,
+                        connection_is_tls,
+                    )
+                    .await;
                 }
 
                 // Mark connection as done
@@ -130,12 +180,28 @@ impl Listener {
     {
         let ep_name = entrypoint_name.to_string();
 
-        let service = service_fn(move |req| {
+        let service = service_fn(move |req: Request<hyper::body::Incoming>| {
             let state = Arc::clone(&state);
             let proxy = Arc::clone(&proxy);
             let ep = ep_name.clone();
 
             async move {
+                // Check for ACME HTTP-01 challenges first (on non-TLS connections)
+                if !is_tls {
+                    if let Some(response) =
+                        try_handle_challenge(&req, &state.acme_challenges).await
+                    {
+                        // Convert Full<Bytes> to BoxBody
+                        let boxed = response.map(|body| {
+                            body.map_err(|_: std::convert::Infallible| {
+                                unreachable!("Infallible error")
+                            })
+                            .boxed()
+                        });
+                        return Ok(boxed);
+                    }
+                }
+
                 // Load current router and services (supports hot reload)
                 let router = state.router.load();
                 let services = state.services.load();

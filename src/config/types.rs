@@ -330,13 +330,34 @@ pub struct CertificateConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcmeConfig {
+    /// Email for ACME account registration
     pub email: String,
 
+    /// Path to store ACME account and certificates
     #[serde(default = "default_acme_storage")]
     pub storage: String,
 
+    /// ACME CA server URL (defaults to Let's Encrypt production)
     #[serde(default)]
     pub ca_server: Option<String>,
+
+    /// Use Let's Encrypt staging server (for testing)
+    #[serde(default)]
+    pub staging: bool,
+
+    /// Domains to automatically obtain certificates for
+    #[serde(default)]
+    pub domains: Vec<AcmeDomainConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcmeDomainConfig {
+    /// Primary domain (required)
+    pub main: String,
+
+    /// Subject Alternative Names (optional)
+    #[serde(default)]
+    pub sans: Vec<String>,
 }
 
 fn default_acme_storage() -> String {

@@ -6,13 +6,16 @@ use crate::config::{watch_config_async, Config};
 use crate::proxy::ProxyHandler;
 use crate::router::Router;
 use crate::service::ServiceManager;
+use crate::tls::{AcmeManager, CertificateResolver, PendingChallenge};
 use anyhow::Result;
 use arc_swap::ArcSwap;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
+use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 /// Tracks active connections for graceful shutdown
@@ -98,6 +101,10 @@ pub struct SharedState {
     pub router: ArcSwap<Router>,
     pub services: ArcSwap<ServiceManager>,
     pub connections: ConnectionTracker,
+    /// Pending ACME challenges for HTTP-01 validation
+    pub acme_challenges: Arc<RwLock<HashMap<String, PendingChallenge>>>,
+    /// Certificate resolver for SNI-based cert selection
+    pub cert_resolver: Option<Arc<CertificateResolver>>,
 }
 
 impl SharedState {
@@ -106,6 +113,19 @@ impl SharedState {
             router: ArcSwap::from_pointee(Router::from_config(config)),
             services: ArcSwap::from_pointee(ServiceManager::new(config)),
             connections: ConnectionTracker::new(),
+            acme_challenges: Arc::new(RwLock::new(HashMap::new())),
+            cert_resolver: None,
+        }
+    }
+
+    /// Create with ACME manager
+    pub fn with_acme(config: &Config, acme_manager: &AcmeManager) -> Self {
+        Self {
+            router: ArcSwap::from_pointee(Router::from_config(config)),
+            services: ArcSwap::from_pointee(ServiceManager::new(config)),
+            connections: ConnectionTracker::new(),
+            acme_challenges: acme_manager.get_pending_challenges(),
+            cert_resolver: Some(acme_manager.get_resolver()),
         }
     }
 
@@ -126,6 +146,8 @@ pub struct Server {
     config: Arc<ArcSwap<Config>>,
     state: Arc<SharedState>,
     proxy: Arc<ProxyHandler>,
+    #[allow(dead_code)] // Kept alive for renewal task
+    acme_manager: Option<Arc<AcmeManager>>,
 }
 
 impl Server {
@@ -143,6 +165,26 @@ impl Server {
             config,
             state,
             proxy,
+            acme_manager: None,
+        }
+    }
+
+    /// Create server with ACME support
+    pub fn with_acme(
+        config: Config,
+        config_path: PathBuf,
+        acme_manager: Arc<AcmeManager>,
+    ) -> Self {
+        let state = Arc::new(SharedState::with_acme(&config, &acme_manager));
+        let config = Arc::new(ArcSwap::from_pointee(config));
+        let proxy = Arc::new(ProxyHandler::new());
+
+        Self {
+            config_path,
+            config,
+            state,
+            proxy,
+            acme_manager: Some(acme_manager),
         }
     }
 

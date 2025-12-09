@@ -1,6 +1,16 @@
+pub mod acme;
+mod resolver;
+
+pub use acme::{
+    try_handle_challenge, AcmeClient, AcmeManager, AcmeManagerBuilder, ChallengeHandler,
+    PendingChallenge, StorageManager, StoredCertificate,
+};
+pub use resolver::CertificateResolver;
+
 use crate::config::{EntrypointTls, TlsConfig};
 use anyhow::{Context, Result};
 use rustls::pki_types::CertificateDer;
+use rustls::server::ResolvesServerCert;
 use rustls::ServerConfig;
 use rustls_pemfile::{certs, private_key};
 use std::fs::File;
@@ -44,6 +54,20 @@ impl TlsAcceptor {
 
     pub fn from_files(cert_path: &str, key_path: &str) -> Result<Self> {
         let config = Self::build_server_config(cert_path, key_path)?;
+
+        Ok(Self {
+            config: Arc::new(config),
+        })
+    }
+
+    /// Create a TLS acceptor with SNI-based certificate resolution
+    pub fn from_resolver(resolver: Arc<dyn ResolvesServerCert>) -> Result<Self> {
+        let mut config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_cert_resolver(resolver);
+
+        // Enable ALPN for HTTP/2 and HTTP/1.1
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
 
         Ok(Self {
             config: Arc::new(config),

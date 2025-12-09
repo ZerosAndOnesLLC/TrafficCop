@@ -1,6 +1,6 @@
 [package]
 name = "traffic_management"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "High-performance reverse proxy and load balancer"
 license = "MIT"
@@ -19,6 +19,8 @@ http-body-util = "0.1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tokio-rustls = "0.26"
 rustls-pemfile = "2"
+ring = "0.17"
+base64 = "0.22"
 
 # Configuration
 serde = { version = "1", features = ["derive"] }
@@ -62,10 +64,12 @@ async-compression = { version = "0.4", features = ["tokio", "gzip", "brotli"] }
 # CLI
 clap = { version = "4", features = ["derive"] }
 
+# HTTP client for ACME
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
 [dev-dependencies]
 criterion = "0.5"
 tokio-test = "0.4"
-reqwest = { version = "0.12", features = ["json"] }
 
 [[bench]]
 name = "proxy_benchmark"

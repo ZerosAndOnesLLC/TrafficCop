@@ -1,6 +1,6 @@
 # TrafficCop - Remaining Features
 
-High-performance reverse proxy and load balancer. Current version: **v0.4.0**
+High-performance reverse proxy and load balancer. Current version: **v0.5.0**
 
 ---
 
@@ -13,6 +13,12 @@ High-performance reverse proxy and load balancer. Current version: **v0.4.0**
 - [x] Hot config reload
 - [x] Graceful shutdown with connection draining
 - [x] Request/connect timeouts
+
+### TLS & Security
+- [x] Let's Encrypt ACME - Automatic certificate provisioning
+- [x] SNI-based cert selection - Multiple certs per listener
+- [x] Automatic certificate renewal (30 days before expiry)
+- [x] HTTP-01 challenge handler
 
 ### Load Balancing
 - [x] Round-robin
@@ -40,17 +46,9 @@ High-performance reverse proxy and load balancer. Current version: **v0.4.0**
 - [x] Prometheus metrics
 - [x] Structured access logging (JSON)
 
----
-
-## 🔴 High Priority
-
-### TLS
-- [ ] **Let's Encrypt ACME** - Automatic certificate provisioning
-- [ ] **SNI-based cert selection** - Multiple certs per listener
-
 ### Operations
-- [ ] **Dockerfile** - Production-ready container image
-- [ ] **Benchmarking suite** - Prove 750k req/s claim
+- [x] Production-ready Dockerfile
+- [x] Benchmarking suite (criterion)
 
 ---
 

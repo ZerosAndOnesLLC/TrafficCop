@@ -1,0 +1,32 @@
+# Build artifacts
+target/
+*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Documentation
+*.md
+!README.md
+
+# Local data
+data/
+*.json
+!config/*.json
+
+# Certificates (don't include local certs in image)
+*.pem
+*.crt
+*.key
+acme.json

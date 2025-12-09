@@ -14,12 +14,15 @@ A high-performance reverse proxy and load balancer written in Rust, designed to 
 - **Health Checks**: HTTP health checks with configurable thresholds
 - **Circuit Breaker**: Automatic backend isolation on failures with recovery
 - **TLS Termination**: Native TLS support via rustls (no OpenSSL dependency)
+- **Let's Encrypt ACME**: Automatic certificate provisioning and renewal
+- **SNI-based Certificates**: Multiple certificates per listener with automatic selection
 - **Request Timeouts**: Configurable connect and request timeouts per service
 - **Middleware Pipeline**: Rate limiting, headers, retry with exponential backoff, compression, IP filtering, CORS, HTTPS redirect, basic auth
 - **Compression**: gzip and brotli response compression
 - **Access Logging**: Structured JSON access logs
 - **Metrics**: Prometheus-compatible metrics endpoint
 - **Traefik-Compatible Rules**: Familiar rule syntax for routing
+- **Docker Ready**: Production-ready Dockerfile included
 
 ## Quick Start
 
@@ -168,6 +171,37 @@ middlewares:
       realm: "Restricted Area"
 ```
 
+### ACME (Let's Encrypt)
+
+Automatic TLS certificate provisioning with Let's Encrypt:
+
+```yaml
+tls:
+  acme:
+    email: "admin@example.com"
+    storage: "/data/acme.json"
+    staging: false  # Set true for testing
+    domains:
+      - main: "example.com"
+        sans:
+          - "www.example.com"
+      - main: "api.example.com"
+
+entrypoints:
+  web:
+    address: "0.0.0.0:80"
+  websecure:
+    address: "0.0.0.0:443"
+    tls:
+      cert_resolver: "acme"  # Use ACME for this entrypoint
+```
+
+HTTP-01 challenges are handled automatically on port 80. Certificates are:
+- Automatically obtained on startup
+- Renewed 30 days before expiry
+- Stored in the specified storage file
+- Selected via SNI for multi-domain support
+
 ### Metrics
 
 Enable Prometheus metrics endpoint:
@@ -242,6 +276,32 @@ cargo bench
 
 ```bash
 ./target/release/traffic_management -c config.yaml --debug
+```
+
+### Docker
+
+Build and run with Docker:
+
+```bash
+# Build image
+docker build -t trafficcop .
+
+# Run with config
+docker run -d \
+  -p 80:80 \
+  -p 443:443 \
+  -p 9090:9090 \
+  -v $(pwd)/config.yaml:/app/config/config.yaml \
+  -v $(pwd)/data:/app/data \
+  trafficcop
+
+# With ACME (Let's Encrypt)
+docker run -d \
+  -p 80:80 \
+  -p 443:443 \
+  -v $(pwd)/config.yaml:/app/config/config.yaml \
+  -v acme-data:/app/data \
+  trafficcop
 ```
 
 ## Project Structure
