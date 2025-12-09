@@ -101,18 +101,26 @@ impl ProxyHandler {
             }
         };
 
-        let backend_url = match service.balancer.next_server() {
-            Some(s) => s.url.clone(),
+        let backend_url = match &service.balancer {
+            Some(balancer) => match balancer.next_server() {
+                Some(s) => s.url.clone(),
+                None => {
+                    error!("No healthy backends for service '{}'", service_name);
+                    return Ok(Self::error_response(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "No Healthy Backends",
+                    ));
+                }
+            },
             None => {
-                error!("No healthy backends for service '{}'", service_name);
+                error!("Service '{}' has no load balancer configured", service_name);
                 return Ok(Self::error_response(
                     StatusCode::SERVICE_UNAVAILABLE,
-                    "No Healthy Backends",
+                    "Service Not Configured",
                 ));
             }
         };
 
-        let timeouts = service.timeouts.clone();
         drop(service);
 
         debug!("Selected backend: {}", backend_url);
@@ -150,7 +158,8 @@ impl ProxyHandler {
             };
 
         // Forward the request to the backend with timeout
-        let request_timeout = Duration::from_millis(timeouts.request_ms);
+        // Default request timeout of 30 seconds (can be configured via serversTransport)
+        let request_timeout = Duration::from_secs(30);
         let backend_future = self.client.request(proxied_req);
 
         match timeout(request_timeout, backend_future).await {

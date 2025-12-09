@@ -1,5 +1,5 @@
 use super::Balancer;
-use crate::config::ServerConfig;
+use crate::config::Server;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Random load balancer with optional weighting
@@ -9,12 +9,12 @@ pub struct RandomBalancer {
 }
 
 struct RandomServer {
-    config: ServerConfig,
+    config: Server,
     healthy: AtomicBool,
 }
 
 impl RandomBalancer {
-    pub fn new(servers: Vec<ServerConfig>) -> Self {
+    pub fn new(servers: Vec<Server>) -> Self {
         let total_weight: u32 = servers.iter().map(|s| s.weight).sum();
         let servers: Vec<RandomServer> = servers
             .into_iter()
@@ -49,7 +49,7 @@ impl RandomBalancer {
 }
 
 impl Balancer for RandomBalancer {
-    fn next_server(&self) -> Option<&ServerConfig> {
+    fn next_server(&self) -> Option<&Server> {
         if self.servers.is_empty() || self.total_weight == 0 {
             return self.servers.first().map(|s| &s.config);
         }
@@ -100,15 +100,17 @@ impl Balancer for RandomBalancer {
 mod tests {
     use super::*;
 
-    fn make_servers() -> Vec<ServerConfig> {
+    fn make_servers() -> Vec<Server> {
         vec![
-            ServerConfig {
+            Server {
                 url: "http://server0:8080".to_string(),
                 weight: 1,
+                preserve_path: false,
             },
-            ServerConfig {
+            Server {
                 url: "http://server1:8080".to_string(),
                 weight: 1,
+                preserve_path: false,
             },
         ]
     }

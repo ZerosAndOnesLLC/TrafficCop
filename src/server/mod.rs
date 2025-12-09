@@ -197,7 +197,7 @@ impl Server {
 
         // Collect entrypoints to avoid lifetime issues
         let entrypoints: Vec<_> = config
-            .entrypoints
+            .entry_points
             .iter()
             .map(|(name, ep)| (name.clone(), ep.clone()))
             .collect();

@@ -1,5 +1,5 @@
 use super::Balancer;
-use crate::config::ServerConfig;
+use crate::config::Server;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
 /// Weighted round-robin load balancer using smooth weighted round-robin algorithm
@@ -9,14 +9,14 @@ pub struct WeightedBalancer {
 }
 
 struct WeightedServer {
-    config: ServerConfig,
+    config: Server,
     healthy: AtomicBool,
     current_weight: AtomicI64, // Use signed to handle subtraction properly
     effective_weight: AtomicU64,
 }
 
 impl WeightedBalancer {
-    pub fn new(servers: Vec<ServerConfig>) -> Self {
+    pub fn new(servers: Vec<Server>) -> Self {
         let servers = servers
             .into_iter()
             .map(|config| {
@@ -43,7 +43,7 @@ impl WeightedBalancer {
 }
 
 impl Balancer for WeightedBalancer {
-    fn next_server(&self) -> Option<&ServerConfig> {
+    fn next_server(&self) -> Option<&Server> {
         if self.servers.is_empty() {
             return None;
         }
@@ -105,19 +105,22 @@ impl Balancer for WeightedBalancer {
 mod tests {
     use super::*;
 
-    fn make_weighted_servers() -> Vec<ServerConfig> {
+    fn make_weighted_servers() -> Vec<Server> {
         vec![
-            ServerConfig {
+            Server {
                 url: "http://server0:8080".to_string(),
                 weight: 5,
+                preserve_path: false,
             },
-            ServerConfig {
+            Server {
                 url: "http://server1:8080".to_string(),
                 weight: 3,
+                preserve_path: false,
             },
-            ServerConfig {
+            Server {
                 url: "http://server2:8080".to_string(),
                 weight: 2,
+                preserve_path: false,
             },
         ]
     }

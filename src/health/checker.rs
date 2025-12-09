@@ -1,5 +1,5 @@
 use super::HealthStatus;
-use crate::config::HealthCheckConfig;
+use crate::config::HealthCheck;
 use hyper::body::Bytes;
 use hyper::{Method, Request, StatusCode};
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -12,14 +12,14 @@ use tokio::time::{interval, timeout};
 use tracing::{debug, warn};
 
 pub struct HealthChecker {
-    config: HealthCheckConfig,
+    config: HealthCheck,
     server_url: String,
     status: Arc<HealthStatus>,
     client: Client<HttpConnector, http_body_util::Empty<Bytes>>,
 }
 
 impl HealthChecker {
-    pub fn new(config: HealthCheckConfig, server_url: String, status: Arc<HealthStatus>) -> Self {
+    pub fn new(config: HealthCheck, server_url: String, status: Arc<HealthStatus>) -> Self {
         let connector = HttpConnector::new();
         let client = Client::builder(TokioExecutor::new())
             .pool_idle_timeout(Duration::from_secs(30))
@@ -35,13 +35,16 @@ impl HealthChecker {
     }
 
     pub async fn start(self) {
-        let mut interval = interval(Duration::from_secs(self.config.interval_seconds));
-        let check_timeout = Duration::from_secs(self.config.timeout_seconds);
-        let healthy_threshold = self.config.healthy_threshold;
-        let unhealthy_threshold = self.config.unhealthy_threshold;
+        let interval_duration = self.config.interval.as_std();
+        let check_timeout = self.config.timeout.as_std();
+        // Traefik doesn't have threshold concepts, so we use sensible defaults
+        let healthy_threshold = 2u32;
+        let unhealthy_threshold = 3u32;
+
+        let mut ticker = interval(interval_duration);
 
         loop {
-            interval.tick().await;
+            ticker.tick().await;
 
             let result = timeout(check_timeout, self.perform_http_check()).await;
 
@@ -81,9 +84,11 @@ impl HealthChecker {
     }
 
     async fn perform_http_check(&self) -> Result<(), String> {
+        let scheme = self.config.scheme.as_deref().unwrap_or("http");
         let check_url = format!(
-            "{}{}",
-            self.server_url.trim_end_matches('/'),
+            "{}://{}{}",
+            scheme,
+            self.server_url.trim_start_matches("http://").trim_start_matches("https://").trim_end_matches('/'),
             self.config.path
         );
 
@@ -91,8 +96,15 @@ impl HealthChecker {
             .parse()
             .map_err(|e| format!("Invalid URL: {}", e))?;
 
+        let method = self
+            .config
+            .method
+            .as_ref()
+            .map(|m| m.parse().unwrap_or(Method::GET))
+            .unwrap_or(Method::GET);
+
         let req = Request::builder()
-            .method(Method::GET)
+            .method(method)
             .uri(uri)
             .header("user-agent", "traffic-management-health-checker/1.0")
             .body(http_body_util::Empty::<Bytes>::new())
@@ -105,8 +117,17 @@ impl HealthChecker {
             .map_err(|e| format!("Request failed: {}", e))?;
 
         let status = response.status();
+
+        // Check against expected status if specified
+        if let Some(expected) = self.config.status {
+            if status.as_u16() != expected {
+                return Err(format!("Expected status {}, got {}", expected, status));
+            }
+            return Ok(());
+        }
+
+        // Default: success or 404 is considered healthy
         if status.is_success() || status == StatusCode::NOT_FOUND {
-            // 404 is considered healthy (service is responding)
             Ok(())
         } else if status.is_server_error() {
             Err(format!("Server error: {}", status))

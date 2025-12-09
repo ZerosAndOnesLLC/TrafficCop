@@ -1,4 +1,4 @@
-use crate::config::Entrypoint;
+use crate::config::EntryPoint;
 use crate::proxy::ProxyHandler;
 use crate::server::SharedState;
 use crate::tls::{try_handle_challenge, TlsAcceptor};
@@ -17,7 +17,7 @@ use tracing::{debug, error, info};
 
 pub struct Listener {
     name: String,
-    entrypoint: Entrypoint,
+    entrypoint: EntryPoint,
     state: Arc<SharedState>,
     proxy: Arc<ProxyHandler>,
     tls_acceptor: Option<TokioTlsAcceptor>,
@@ -26,7 +26,7 @@ pub struct Listener {
 impl Listener {
     pub fn new(
         name: String,
-        entrypoint: Entrypoint,
+        entrypoint: EntryPoint,
         state: Arc<SharedState>,
         proxy: Arc<ProxyHandler>,
     ) -> Self {
@@ -44,10 +44,11 @@ impl Listener {
 
     fn build_tls_acceptor(
         name: &str,
-        entrypoint: &Entrypoint,
+        entrypoint: &EntryPoint,
         state: &SharedState,
     ) -> Option<TokioTlsAcceptor> {
-        let tls_config = entrypoint.tls.as_ref()?;
+        // TLS can be configured at entrypoint level (http.tls)
+        let tls_config = entrypoint.http.as_ref()?.tls.as_ref()?;
 
         // Check if we should use ACME/SNI resolver
         if tls_config.cert_resolver.is_some() {
@@ -70,11 +71,15 @@ impl Listener {
             }
         }
 
-        // Fall back to static cert files
-        if tls_config.cert_file.is_some() && tls_config.key_file.is_some() {
-            match TlsAcceptor::from_entrypoint_tls(tls_config) {
+        // If TLS is enabled but no cert resolver, try to use certificates from global TLS config
+        // This will be resolved by the router/server when loading the full config
+        // For now, just enable TLS mode (the actual certs come from tls.certificates)
+        info!("TLS enabled for entrypoint '{}' (via http.tls)", name);
+
+        // Use shared cert resolver if available
+        if let Some(ref resolver) = state.cert_resolver {
+            match TlsAcceptor::from_resolver(Arc::clone(resolver) as Arc<dyn ResolvesServerCert>) {
                 Ok(acceptor) => {
-                    info!("TLS enabled for entrypoint '{}' (static cert)", name);
                     return Some(TokioTlsAcceptor::from(acceptor.get_config()));
                 }
                 Err(e) => {

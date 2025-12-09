@@ -56,38 +56,33 @@ async fn main() -> Result<()> {
 
     // Start metrics server if configured
     if let Some(ref metrics_config) = config.metrics {
-        info!(
-            "Starting Prometheus metrics server on {}",
-            metrics_config.address
-        );
-        if let Err(e) = metrics::start_metrics_server(&metrics_config.address) {
-            warn!(
-                "Failed to start metrics server: {}. Continuing without metrics.",
-                e
+        if let Some(ref prometheus) = metrics_config.prometheus {
+            info!(
+                "Starting Prometheus metrics server on {}",
+                prometheus.address
             );
+            if let Err(e) = metrics::start_metrics_server(&prometheus.address) {
+                warn!(
+                    "Failed to start metrics server: {}. Continuing without metrics.",
+                    e
+                );
+            }
         }
     }
 
-    // Initialize ACME if configured
-    let server = if let Some(ref acme_config) = config.tls.acme {
-        info!("Initializing ACME certificate management");
+    // Initialize ACME if configured via certificatesResolvers
+    let server = if let Some((resolver_name, resolver)) = config
+        .certificates_resolvers
+        .iter()
+        .find(|(_, r)| r.acme.is_some())
+    {
+        let acme_config = resolver.acme.as_ref().unwrap();
+        info!(
+            "Initializing ACME certificate management (resolver: {})",
+            resolver_name
+        );
 
-        let ca_server = if acme_config.staging {
-            Some("https://acme-staging-v02.api.letsencrypt.org/directory")
-        } else {
-            acme_config.ca_server.as_deref()
-        };
-
-        // Build domain list from config
-        let domains: Vec<Vec<String>> = acme_config
-            .domains
-            .iter()
-            .map(|d| {
-                let mut all = vec![d.main.clone()];
-                all.extend(d.sans.clone());
-                all
-            })
-            .collect();
+        let ca_server = acme_config.ca_server.as_deref();
 
         let mut builder = AcmeManagerBuilder::new(&acme_config.email, &acme_config.storage);
 
@@ -95,8 +90,18 @@ async fn main() -> Result<()> {
             builder = builder.ca_server(ca);
         }
 
-        for domain_set in domains {
-            builder = builder.domain(domain_set);
+        // Domains are typically configured per-router via tls.domains in Traefik
+        // For now, we'll collect domains from routers that use this resolver
+        for (_name, router) in config.routers() {
+            if let Some(tls) = &router.tls {
+                if tls.cert_resolver.as_deref() == Some(resolver_name) {
+                    for domain in &tls.domains {
+                        let mut all = vec![domain.main.clone()];
+                        all.extend(domain.sans.clone());
+                        builder = builder.domain(all);
+                    }
+                }
+            }
         }
 
         match builder.build().await {

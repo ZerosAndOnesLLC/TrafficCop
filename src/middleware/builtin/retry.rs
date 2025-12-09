@@ -13,7 +13,7 @@ impl RetryMiddleware {
     pub fn new(config: RetryConfig) -> Self {
         Self {
             max_attempts: config.attempts.max(1),
-            initial_interval: Duration::from_millis(config.initial_interval_ms),
+            initial_interval: config.initial_interval.as_std(),
             max_interval: Duration::from_secs(30), // Cap at 30 seconds
             multiplier: 2.0,
         }
@@ -114,11 +114,12 @@ impl Iterator for RetryIterator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Duration as ConfigDuration;
 
     fn make_config() -> RetryConfig {
         RetryConfig {
             attempts: 3,
-            initial_interval_ms: 100,
+            initial_interval: ConfigDuration::from_millis(100),
         }
     }
 
@@ -143,7 +144,7 @@ mod tests {
     fn test_delay_capped_at_max() {
         let config = RetryConfig {
             attempts: 20,
-            initial_interval_ms: 1000,
+            initial_interval: ConfigDuration::from_millis(1000),
         };
         let middleware = RetryMiddleware::new(config);
 

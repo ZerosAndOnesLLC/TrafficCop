@@ -1,145 +1,378 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+use super::duration::Duration;
+
+/// Root configuration - can be static config (traefik.yml) or combined
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct Config {
+    /// Entry points configuration (static config)
     #[serde(default)]
-    pub entrypoints: HashMap<String, Entrypoint>,
+    pub entry_points: HashMap<String, EntryPoint>,
+
+    /// HTTP routing configuration (dynamic config)
+    #[serde(default)]
+    pub http: Option<HttpConfig>,
+
+    /// TLS configuration (dynamic config)
+    #[serde(default)]
+    pub tls: Option<TlsConfig>,
+
+    /// Certificate resolvers (static config)
+    #[serde(default)]
+    pub certificates_resolvers: HashMap<String, CertificateResolver>,
+
+    /// File provider configuration (static config)
+    #[serde(default)]
+    pub providers: Option<ProvidersConfig>,
+
+    /// Metrics configuration
+    #[serde(default)]
+    pub metrics: Option<MetricsConfig>,
+
+    /// API configuration
+    #[serde(default)]
+    pub api: Option<ApiConfig>,
+
+    /// Log configuration
+    #[serde(default)]
+    pub log: Option<LogConfig>,
+
+    /// Access log configuration
+    #[serde(default)]
+    pub access_log: Option<AccessLogConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpConfig {
+    #[serde(default)]
+    pub routers: HashMap<String, Router>,
 
     #[serde(default)]
     pub services: HashMap<String, Service>,
 
     #[serde(default)]
-    pub routers: HashMap<String, Router>,
-
-    #[serde(default)]
     pub middlewares: HashMap<String, MiddlewareConfig>,
 
     #[serde(default)]
-    pub tls: TlsConfig,
-
-    #[serde(default)]
-    pub metrics: Option<MetricsConfig>,
+    pub servers_transports: HashMap<String, ServersTransport>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MetricsConfig {
+    #[serde(default)]
+    pub prometheus: Option<PrometheusConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrometheusConfig {
     #[serde(default = "default_metrics_address")]
     pub address: String,
+
+    #[serde(default)]
+    pub add_entry_points_labels: bool,
+
+    #[serde(default)]
+    pub add_services_labels: bool,
 }
 
 fn default_metrics_address() -> String {
-    "0.0.0.0:9090".to_string()
+    ":9090".to_string()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConfig {
+    #[serde(default)]
+    pub dashboard: bool,
+
+    #[serde(default)]
+    pub insecure: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LogConfig {
+    #[serde(default)]
+    pub level: Option<String>,
+
+    #[serde(default)]
+    pub format: Option<String>,
+
+    #[serde(default)]
+    pub file_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessLogConfig {
+    #[serde(default)]
+    pub file_path: Option<String>,
+
+    #[serde(default)]
+    pub format: Option<String>,
+
+    #[serde(default)]
+    pub bufferingsize: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvidersConfig {
+    #[serde(default)]
+    pub file: Option<FileProviderConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FileProviderConfig {
+    #[serde(default)]
+    pub filename: Option<String>,
+
+    #[serde(default)]
+    pub directory: Option<String>,
+
+    #[serde(default = "default_watch")]
+    pub watch: bool,
+}
+
+fn default_watch() -> bool {
+    true
+}
+
+// =============================================================================
+// Entry Points
+// =============================================================================
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Entrypoint {
+#[serde(rename_all = "camelCase")]
+pub struct EntryPoint {
     pub address: String,
 
     #[serde(default)]
-    pub tls: Option<EntrypointTls>,
+    pub as_default: bool,
+
+    #[serde(default)]
+    pub http: Option<EntryPointHttp>,
+
+    #[serde(default)]
+    pub forwarded_headers: Option<ForwardedHeaders>,
+
+    #[serde(default)]
+    pub transport: Option<EntryPointTransport>,
+
+    #[serde(default)]
+    pub proxy_protocol: Option<ProxyProtocol>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryPointHttp {
+    #[serde(default)]
+    pub redirections: Option<EntryPointRedirections>,
+
+    #[serde(default)]
+    pub tls: Option<EntryPointTls>,
+
+    #[serde(default)]
+    pub middlewares: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryPointRedirections {
+    #[serde(default)]
+    pub entry_point: Option<RedirectEntryPoint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntrypointTls {
+#[serde(rename_all = "camelCase")]
+pub struct RedirectEntryPoint {
+    pub to: String,
+
+    #[serde(default = "default_https_scheme")]
+    pub scheme: String,
+
+    #[serde(default = "default_true")]
+    pub permanent: bool,
+
+    #[serde(default)]
+    pub priority: Option<i32>,
+}
+
+fn default_https_scheme() -> String {
+    "https".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryPointTls {
+    #[serde(default)]
+    pub options: Option<String>,
+
     #[serde(default)]
     pub cert_resolver: Option<String>,
 
     #[serde(default)]
-    pub cert_file: Option<String>,
+    pub domains: Vec<TlsDomain>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ForwardedHeaders {
+    #[serde(default)]
+    pub trusted_ips: Vec<String>,
 
     #[serde(default)]
-    pub key_file: Option<String>,
+    pub insecure: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryPointTransport {
+    #[serde(default)]
+    pub responding_timeouts: Option<RespondingTimeouts>,
+
+    #[serde(default)]
+    pub life_cycle: Option<LifeCycle>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Service {
-    #[serde(default)]
-    pub load_balancer: LoadBalancerConfig,
-
-    pub servers: Vec<ServerConfig>,
-
-    #[serde(default)]
-    pub health_check: Option<HealthCheckConfig>,
+#[serde(rename_all = "camelCase")]
+pub struct RespondingTimeouts {
+    #[serde(default = "default_read_timeout")]
+    pub read_timeout: Duration,
 
     #[serde(default)]
-    pub timeouts: TimeoutConfig,
-}
+    pub write_timeout: Duration,
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TimeoutConfig {
-    /// Connection timeout in milliseconds
-    #[serde(default = "default_connect_timeout")]
-    pub connect_ms: u64,
-
-    /// Request timeout in milliseconds (total time for request)
-    #[serde(default = "default_request_timeout")]
-    pub request_ms: u64,
-
-    /// Idle timeout for connection pool in seconds
     #[serde(default = "default_idle_timeout")]
-    pub idle_seconds: u64,
+    pub idle_timeout: Duration,
 }
 
-impl Default for TimeoutConfig {
+fn default_read_timeout() -> Duration {
+    Duration::from_secs(60)
+}
+
+fn default_idle_timeout() -> Duration {
+    Duration::from_secs(180)
+}
+
+impl Default for RespondingTimeouts {
     fn default() -> Self {
         Self {
-            connect_ms: default_connect_timeout(),
-            request_ms: default_request_timeout(),
-            idle_seconds: default_idle_timeout(),
+            read_timeout: default_read_timeout(),
+            write_timeout: Duration::ZERO,
+            idle_timeout: default_idle_timeout(),
         }
     }
 }
 
-fn default_connect_timeout() -> u64 {
-    5000 // 5 seconds
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LifeCycle {
+    #[serde(default = "default_grace_timeout")]
+    pub grace_time_out: Duration,
+
+    #[serde(default)]
+    pub request_accept_grace_timeout: Duration,
 }
 
-fn default_request_timeout() -> u64 {
-    30000 // 30 seconds
+fn default_grace_timeout() -> Duration {
+    Duration::from_secs(10)
 }
 
-fn default_idle_timeout() -> u64 {
-    90
+impl Default for LifeCycle {
+    fn default() -> Self {
+        Self {
+            grace_time_out: default_grace_timeout(),
+            request_accept_grace_timeout: Duration::ZERO,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LoadBalancerConfig {
+#[serde(rename_all = "camelCase")]
+pub struct ProxyProtocol {
     #[serde(default)]
-    pub strategy: LoadBalancerStrategy,
+    pub trusted_ips: Vec<String>,
 
     #[serde(default)]
-    pub sticky: Option<StickyConfig>,
+    pub insecure: bool,
 }
 
+// =============================================================================
+// Services
+// =============================================================================
+
+/// Service configuration - in Traefik format, exactly one of these should be set
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum LoadBalancerStrategy {
-    #[default]
-    RoundRobin,
-    Weighted,
-    LeastConn,
-    Random,
+#[serde(rename_all = "camelCase")]
+pub struct Service {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load_balancer: Option<LoadBalancerService>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weighted: Option<WeightedService>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirroring: Option<MirroringService>,
+}
+
+impl Service {
+    /// Get the service type for matching
+    pub fn service_type(&self) -> &'static str {
+        if self.load_balancer.is_some() {
+            "loadBalancer"
+        } else if self.weighted.is_some() {
+            "weighted"
+        } else if self.mirroring.is_some() {
+            "mirroring"
+        } else {
+            "unknown"
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StickyConfig {
-    pub cookie_name: String,
+#[serde(rename_all = "camelCase")]
+pub struct LoadBalancerService {
+    pub servers: Vec<Server>,
 
-    #[serde(default = "default_cookie_ttl")]
-    pub ttl_seconds: u64,
-}
+    #[serde(default = "default_true")]
+    pub pass_host_header: bool,
 
-fn default_cookie_ttl() -> u64 {
-    3600
+    #[serde(default)]
+    pub sticky: Option<Sticky>,
+
+    #[serde(default)]
+    pub health_check: Option<HealthCheck>,
+
+    #[serde(default)]
+    pub servers_transport: Option<String>,
+
+    #[serde(default)]
+    pub response_forwarding: Option<ResponseForwarding>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerConfig {
+#[serde(rename_all = "camelCase")]
+pub struct Server {
     pub url: String,
 
     #[serde(default = "default_weight")]
     pub weight: u32,
+
+    #[serde(default)]
+    pub preserve_path: bool,
 }
 
 fn default_weight() -> u32 {
@@ -147,43 +380,206 @@ fn default_weight() -> u32 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HealthCheckConfig {
+#[serde(rename_all = "camelCase")]
+pub struct Sticky {
+    #[serde(default)]
+    pub cookie: Option<StickyCookie>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StickyCookie {
+    pub name: String,
+
+    #[serde(default)]
+    pub secure: bool,
+
+    #[serde(default)]
+    pub http_only: bool,
+
+    #[serde(default)]
+    pub same_site: Option<String>,
+
+    #[serde(default)]
+    pub max_age: Option<i64>,
+
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthCheck {
     #[serde(default = "default_health_path")]
     pub path: String,
 
     #[serde(default = "default_health_interval")]
-    pub interval_seconds: u64,
+    pub interval: Duration,
 
     #[serde(default = "default_health_timeout")]
-    pub timeout_seconds: u64,
+    pub timeout: Duration,
 
-    #[serde(default = "default_health_threshold")]
-    pub healthy_threshold: u32,
+    #[serde(default)]
+    pub scheme: Option<String>,
 
-    #[serde(default = "default_health_threshold")]
-    pub unhealthy_threshold: u32,
+    #[serde(default)]
+    pub method: Option<String>,
+
+    #[serde(default)]
+    pub status: Option<u16>,
+
+    #[serde(default)]
+    pub hostname: Option<String>,
+
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
 }
 
 fn default_health_path() -> String {
-    "/health".to_string()
+    "/".to_string()
 }
 
-fn default_health_interval() -> u64 {
-    10
+fn default_health_interval() -> Duration {
+    Duration::from_secs(30)
 }
 
-fn default_health_timeout() -> u64 {
-    5
+fn default_health_timeout() -> Duration {
+    Duration::from_secs(5)
 }
 
-fn default_health_threshold() -> u32 {
-    3
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ResponseForwarding {
+    #[serde(default)]
+    pub flush_interval: Option<Duration>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WeightedService {
+    pub services: Vec<WeightedServiceRef>,
+
+    #[serde(default)]
+    pub sticky: Option<Sticky>,
+
+    #[serde(default)]
+    pub health_check: Option<HealthCheck>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WeightedServiceRef {
+    pub name: String,
+
+    #[serde(default = "default_weight")]
+    pub weight: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MirroringService {
+    pub service: String,
+
+    #[serde(default)]
+    pub mirrors: Vec<MirrorRef>,
+
+    #[serde(default)]
+    pub max_body_size: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MirrorRef {
+    pub name: String,
+
+    #[serde(default = "default_mirror_percent")]
+    pub percent: u32,
+}
+
+fn default_mirror_percent() -> u32 {
+    100
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServersTransport {
+    #[serde(default)]
+    pub server_name: Option<String>,
+
+    #[serde(default)]
+    pub insecure_skip_verify: bool,
+
+    #[serde(default)]
+    pub root_cas: Vec<String>,
+
+    #[serde(default)]
+    pub certificates: Vec<TlsCertificate>,
+
+    #[serde(default = "default_max_idle_conns")]
+    pub max_idle_conns_per_host: i32,
+
+    #[serde(default)]
+    pub forwarding_timeouts: Option<ForwardingTimeouts>,
+
+    #[serde(default)]
+    pub disable_http2: bool,
+
+    #[serde(default)]
+    pub peer_cert_uri: Option<String>,
+}
+
+fn default_max_idle_conns() -> i32 {
+    200
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForwardingTimeouts {
+    #[serde(default = "default_dial_timeout")]
+    pub dial_timeout: Duration,
+
+    #[serde(default)]
+    pub response_header_timeout: Duration,
+
+    #[serde(default = "default_idle_conn_timeout")]
+    pub idle_conn_timeout: Duration,
+
+    #[serde(default)]
+    pub read_idle_timeout: Duration,
+
+    #[serde(default)]
+    pub ping_timeout: Duration,
+}
+
+fn default_dial_timeout() -> Duration {
+    Duration::from_secs(30)
+}
+
+fn default_idle_conn_timeout() -> Duration {
+    Duration::from_secs(90)
+}
+
+impl Default for ForwardingTimeouts {
+    fn default() -> Self {
+        Self {
+            dial_timeout: default_dial_timeout(),
+            response_header_timeout: Duration::ZERO,
+            idle_conn_timeout: default_idle_conn_timeout(),
+            read_idle_timeout: Duration::ZERO,
+            ping_timeout: Duration::ZERO,
+        }
+    }
+}
+
+// =============================================================================
+// Routers
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Router {
     #[serde(default)]
-    pub entrypoints: Vec<String>,
+    pub entry_points: Vec<String>,
 
     pub rule: String,
 
@@ -197,33 +593,156 @@ pub struct Router {
 
     #[serde(default)]
     pub tls: Option<RouterTls>,
+
+    #[serde(default)]
+    pub observability: Option<RouterObservability>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct RouterTls {
     #[serde(default)]
     pub cert_resolver: Option<String>,
 
     #[serde(default)]
-    pub domains: Vec<String>,
+    pub domains: Vec<TlsDomain>,
+
+    #[serde(default)]
+    pub options: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MiddlewareConfig {
-    RateLimit(RateLimitConfig),
-    Headers(HeadersConfig),
-    BasicAuth(BasicAuthConfig),
-    ForwardAuth(ForwardAuthConfig),
-    Compress(CompressConfig),
-    Retry(RetryConfig),
-    CircuitBreaker(CircuitBreakerConfig),
-    IpFilter(IpFilterConfig),
-    Cors(CorsConfig),
-    RedirectScheme(RedirectSchemeConfig),
+#[serde(rename_all = "camelCase")]
+pub struct TlsDomain {
+    pub main: String,
+
+    #[serde(default)]
+    pub sans: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RouterObservability {
+    #[serde(default = "default_true")]
+    pub access_logs: bool,
+
+    #[serde(default = "default_true")]
+    pub tracing: bool,
+
+    #[serde(default = "default_true")]
+    pub metrics: bool,
+}
+
+// =============================================================================
+// Middlewares
+// =============================================================================
+
+/// Middleware configuration - in Traefik format, exactly one of these should be set
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MiddlewareConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<RateLimitConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip_allow_list: Option<IpAllowListConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip_deny_list: Option<IpDenyListConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers: Option<HeadersConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basic_auth: Option<BasicAuthConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest_auth: Option<DigestAuthConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forward_auth: Option<ForwardAuthConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compress: Option<CompressConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry: Option<RetryConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub circuit_breaker: Option<CircuitBreakerConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redirect_scheme: Option<RedirectSchemeConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redirect_regex: Option<RedirectRegexConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strip_prefix: Option<StripPrefixConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strip_prefix_regex: Option<StripPrefixRegexConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_prefix: Option<AddPrefixConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replace_path: Option<ReplacePathConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replace_path_regex: Option<ReplacePathRegexConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain: Option<ChainConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub buffering: Option<BufferingConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_flight_req: Option<InFlightReqConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pass_tls_client_cert: Option<PassTlsClientCertConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<ContentTypeConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grpc_web: Option<GrpcWebConfig>,
+}
+
+impl MiddlewareConfig {
+    /// Get the middleware type name
+    pub fn middleware_type(&self) -> &'static str {
+        if self.rate_limit.is_some() { "rateLimit" }
+        else if self.ip_allow_list.is_some() { "ipAllowList" }
+        else if self.ip_deny_list.is_some() { "ipDenyList" }
+        else if self.headers.is_some() { "headers" }
+        else if self.basic_auth.is_some() { "basicAuth" }
+        else if self.digest_auth.is_some() { "digestAuth" }
+        else if self.forward_auth.is_some() { "forwardAuth" }
+        else if self.compress.is_some() { "compress" }
+        else if self.retry.is_some() { "retry" }
+        else if self.circuit_breaker.is_some() { "circuitBreaker" }
+        else if self.redirect_scheme.is_some() { "redirectScheme" }
+        else if self.redirect_regex.is_some() { "redirectRegex" }
+        else if self.strip_prefix.is_some() { "stripPrefix" }
+        else if self.strip_prefix_regex.is_some() { "stripPrefixRegex" }
+        else if self.add_prefix.is_some() { "addPrefix" }
+        else if self.replace_path.is_some() { "replacePath" }
+        else if self.replace_path_regex.is_some() { "replacePathRegex" }
+        else if self.chain.is_some() { "chain" }
+        else if self.buffering.is_some() { "buffering" }
+        else if self.in_flight_req.is_some() { "inFlightReq" }
+        else if self.pass_tls_client_cert.is_some() { "passTLSClientCert" }
+        else if self.content_type.is_some() { "contentType" }
+        else if self.grpc_web.is_some() { "grpcWeb" }
+        else { "unknown" }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RateLimitConfig {
     pub average: u64,
 
@@ -231,133 +750,642 @@ pub struct RateLimitConfig {
     pub burst: u64,
 
     #[serde(default = "default_rate_period")]
-    pub period_seconds: u64,
+    pub period: Duration,
+
+    #[serde(default)]
+    pub source_criterion: Option<SourceCriterion>,
 }
 
-fn default_rate_period() -> u64 {
-    1
+fn default_rate_period() -> Duration {
+    Duration::from_secs(1)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceCriterion {
+    #[serde(default)]
+    pub ip_strategy: Option<IpStrategy>,
+
+    #[serde(default)]
+    pub request_header_name: Option<String>,
+
+    #[serde(default)]
+    pub request_host: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct IpStrategy {
+    #[serde(default)]
+    pub depth: u32,
+
+    #[serde(default)]
+    pub excluded_ips: Vec<String>,
+
+    #[serde(default)]
+    pub ipv6_subnet: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IpAllowListConfig {
+    pub source_range: Vec<String>,
+
+    #[serde(default)]
+    pub ip_strategy: Option<IpStrategy>,
+
+    #[serde(default)]
+    pub reject_status_code: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IpDenyListConfig {
+    pub source_range: Vec<String>,
+
+    #[serde(default)]
+    pub ip_strategy: Option<IpStrategy>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct HeadersConfig {
+    // Custom headers
     #[serde(default)]
-    pub request_headers: HashMap<String, String>,
+    pub custom_request_headers: HashMap<String, String>,
 
     #[serde(default)]
-    pub response_headers: HashMap<String, String>,
+    pub custom_response_headers: HashMap<String, String>,
+
+    // CORS
+    #[serde(default)]
+    pub access_control_allow_credentials: bool,
 
     #[serde(default)]
-    pub remove_request_headers: Vec<String>,
+    pub access_control_allow_headers: Vec<String>,
 
     #[serde(default)]
-    pub remove_response_headers: Vec<String>,
+    pub access_control_allow_methods: Vec<String>,
+
+    #[serde(default)]
+    pub access_control_allow_origin_list: Vec<String>,
+
+    #[serde(default)]
+    pub access_control_allow_origin_list_regex: Vec<String>,
+
+    #[serde(default)]
+    pub access_control_expose_headers: Vec<String>,
+
+    #[serde(default)]
+    pub access_control_max_age: Option<i64>,
+
+    #[serde(default)]
+    pub add_vary_header: bool,
+
+    // Security headers
+    #[serde(default)]
+    pub frame_deny: bool,
+
+    #[serde(default)]
+    pub custom_frame_options_value: Option<String>,
+
+    #[serde(default)]
+    pub content_type_nosniff: bool,
+
+    #[serde(default)]
+    pub browser_xss_filter: bool,
+
+    #[serde(default)]
+    pub custom_browser_xss_value: Option<String>,
+
+    #[serde(default)]
+    pub content_security_policy: Option<String>,
+
+    #[serde(default)]
+    pub content_security_policy_report_only: Option<String>,
+
+    #[serde(default)]
+    pub public_key: Option<String>,
+
+    #[serde(default)]
+    pub referrer_policy: Option<String>,
+
+    #[serde(default)]
+    pub permissions_policy: Option<String>,
+
+    // HSTS
+    #[serde(default)]
+    pub sts_seconds: i64,
+
+    #[serde(default)]
+    pub sts_include_subdomains: bool,
+
+    #[serde(default)]
+    pub sts_preload: bool,
+
+    #[serde(default)]
+    pub force_sts_header: bool,
+
+    // Host
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
+
+    #[serde(default)]
+    pub hosts_proxy_headers: Vec<String>,
+
+    #[serde(default)]
+    pub ssl_redirect: bool,
+
+    #[serde(default)]
+    pub ssl_temporary_redirect: bool,
+
+    #[serde(default)]
+    pub ssl_host: Option<String>,
+
+    #[serde(default)]
+    pub ssl_proxy_headers: HashMap<String, String>,
+
+    #[serde(default)]
+    pub ssl_force_host: bool,
+
+    #[serde(default)]
+    pub is_development: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BasicAuthConfig {
-    pub users: Vec<String>, // format: "user:password_hash"
+    #[serde(default)]
+    pub users: Vec<String>,
+
+    #[serde(default)]
+    pub users_file: Option<String>,
 
     #[serde(default)]
     pub realm: Option<String>,
+
+    #[serde(default)]
+    pub header_field: Option<String>,
+
+    #[serde(default)]
+    pub remove_header: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DigestAuthConfig {
+    #[serde(default)]
+    pub users: Vec<String>,
+
+    #[serde(default)]
+    pub users_file: Option<String>,
+
+    #[serde(default)]
+    pub realm: Option<String>,
+
+    #[serde(default)]
+    pub header_field: Option<String>,
+
+    #[serde(default)]
+    pub remove_header: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ForwardAuthConfig {
     pub address: String,
 
     #[serde(default)]
+    pub trust_forward_header: bool,
+
+    #[serde(default)]
     pub auth_response_headers: Vec<String>,
+
+    #[serde(default)]
+    pub auth_response_headers_regex: Option<String>,
+
+    #[serde(default)]
+    pub auth_request_headers: Vec<String>,
+
+    #[serde(default)]
+    pub tls: Option<ForwardAuthTls>,
+
+    #[serde(default)]
+    pub add_auth_cookies_to_response: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ForwardAuthTls {
+    #[serde(default)]
+    pub ca: Option<String>,
+
+    #[serde(default)]
+    pub cert: Option<String>,
+
+    #[serde(default)]
+    pub key: Option<String>,
+
+    #[serde(default)]
+    pub insecure_skip_verify: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct CompressConfig {
+    #[serde(default)]
+    pub excluded_content_types: Vec<String>,
+
+    #[serde(default)]
+    pub included_content_types: Vec<String>,
+
     #[serde(default = "default_compress_min_size")]
     pub min_response_body_bytes: u64,
+
+    #[serde(default)]
+    pub default_encoding: Option<String>,
+
+    #[serde(default = "default_encodings")]
+    pub encodings: Vec<String>,
 }
 
 fn default_compress_min_size() -> u64 {
     1024
 }
 
+fn default_encodings() -> Vec<String> {
+    vec!["zstd".to_string(), "br".to_string(), "gzip".to_string()]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RetryConfig {
     #[serde(default = "default_retry_attempts")]
     pub attempts: u32,
 
     #[serde(default = "default_retry_initial_interval")]
-    pub initial_interval_ms: u64,
+    pub initial_interval: Duration,
 }
 
 fn default_retry_attempts() -> u32 {
     3
 }
 
-fn default_retry_initial_interval() -> u64 {
-    100
+fn default_retry_initial_interval() -> Duration {
+    Duration::from_millis(100)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CircuitBreakerConfig {
-    #[serde(default = "default_cb_threshold")]
-    pub failure_threshold: u32,
+    pub expression: String,
 
-    #[serde(default = "default_cb_timeout")]
-    pub recovery_timeout_seconds: u64,
+    #[serde(default = "default_cb_check_period")]
+    pub check_period: Duration,
+
+    #[serde(default = "default_cb_fallback_duration")]
+    pub fallback_duration: Duration,
+
+    #[serde(default = "default_cb_recovery_duration")]
+    pub recovery_duration: Duration,
+
+    #[serde(default = "default_cb_response_code")]
+    pub response_code: u16,
 }
 
-fn default_cb_threshold() -> u32 {
-    5
+fn default_cb_check_period() -> Duration {
+    Duration::from_millis(100)
 }
 
-fn default_cb_timeout() -> u64 {
-    30
+fn default_cb_fallback_duration() -> Duration {
+    Duration::from_secs(10)
+}
+
+fn default_cb_recovery_duration() -> Duration {
+    Duration::from_secs(10)
+}
+
+fn default_cb_response_code() -> u16 {
+    503
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RedirectSchemeConfig {
+    #[serde(default = "default_https_scheme")]
+    pub scheme: String,
+
+    #[serde(default)]
+    pub permanent: bool,
+
+    #[serde(default)]
+    pub port: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RedirectRegexConfig {
+    pub regex: String,
+
+    pub replacement: String,
+
+    #[serde(default)]
+    pub permanent: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StripPrefixConfig {
+    pub prefixes: Vec<String>,
+
+    #[serde(default)]
+    pub force_slash: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StripPrefixRegexConfig {
+    pub regex: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddPrefixConfig {
+    pub prefix: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplacePathConfig {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplacePathRegexConfig {
+    pub regex: String,
+
+    pub replacement: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainConfig {
+    pub middlewares: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BufferingConfig {
+    #[serde(default)]
+    pub max_request_body_bytes: i64,
+
+    #[serde(default)]
+    pub mem_request_body_bytes: i64,
+
+    #[serde(default)]
+    pub max_response_body_bytes: i64,
+
+    #[serde(default)]
+    pub mem_response_body_bytes: i64,
+
+    #[serde(default)]
+    pub retry_expression: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InFlightReqConfig {
+    pub amount: i64,
+
+    #[serde(default)]
+    pub source_criterion: Option<SourceCriterion>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PassTlsClientCertConfig {
+    #[serde(default)]
+    pub pem: bool,
+
+    #[serde(default)]
+    pub info: Option<TlsClientCertInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TlsClientCertInfo {
+    #[serde(default)]
+    pub not_after: bool,
+
+    #[serde(default)]
+    pub not_before: bool,
+
+    #[serde(default)]
+    pub sans: bool,
+
+    #[serde(default)]
+    pub serial_number: bool,
+
+    #[serde(default)]
+    pub subject: Option<TlsClientCertSubject>,
+
+    #[serde(default)]
+    pub issuer: Option<TlsClientCertIssuer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TlsClientCertSubject {
+    #[serde(default)]
+    pub country: bool,
+
+    #[serde(default)]
+    pub province: bool,
+
+    #[serde(default)]
+    pub locality: bool,
+
+    #[serde(default)]
+    pub organization: bool,
+
+    #[serde(default)]
+    pub organizational_unit: bool,
+
+    #[serde(default)]
+    pub common_name: bool,
+
+    #[serde(default)]
+    pub serial_number: bool,
+
+    #[serde(default)]
+    pub domain_component: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TlsClientCertIssuer {
+    #[serde(default)]
+    pub country: bool,
+
+    #[serde(default)]
+    pub province: bool,
+
+    #[serde(default)]
+    pub locality: bool,
+
+    #[serde(default)]
+    pub organization: bool,
+
+    #[serde(default)]
+    pub common_name: bool,
+
+    #[serde(default)]
+    pub serial_number: bool,
+
+    #[serde(default)]
+    pub domain_component: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentTypeConfig {
+    #[serde(default)]
+    pub auto_detect: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GrpcWebConfig {
+    #[serde(default)]
+    pub allow_origins: Vec<String>,
+}
+
+// =============================================================================
+// TLS Configuration
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct TlsConfig {
     #[serde(default)]
-    pub certificates: Vec<CertificateConfig>,
+    pub certificates: Vec<TlsCertificate>,
 
+    #[serde(default)]
+    pub options: HashMap<String, TlsOptions>,
+
+    #[serde(default)]
+    pub stores: HashMap<String, TlsStore>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TlsCertificate {
+    pub cert_file: String,
+
+    pub key_file: String,
+
+    #[serde(default)]
+    pub stores: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TlsOptions {
+    #[serde(default)]
+    pub min_version: Option<String>,
+
+    #[serde(default)]
+    pub max_version: Option<String>,
+
+    #[serde(default)]
+    pub cipher_suites: Vec<String>,
+
+    #[serde(default)]
+    pub curve_preferences: Vec<String>,
+
+    #[serde(default)]
+    pub client_auth: Option<ClientAuth>,
+
+    #[serde(default)]
+    pub sni_strict: bool,
+
+    #[serde(default)]
+    pub alpn_protocols: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientAuth {
+    #[serde(default)]
+    pub ca_files: Vec<String>,
+
+    #[serde(default)]
+    pub client_auth_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TlsStore {
+    #[serde(default)]
+    pub default_certificate: Option<TlsCertificate>,
+
+    #[serde(default)]
+    pub default_generated_cert: Option<DefaultGeneratedCert>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DefaultGeneratedCert {
+    pub resolver: String,
+
+    #[serde(default)]
+    pub domain: Option<TlsDomain>,
+}
+
+// =============================================================================
+// Certificate Resolvers (ACME)
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CertificateResolver {
     #[serde(default)]
     pub acme: Option<AcmeConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CertificateConfig {
-    pub cert_file: String,
-    pub key_file: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AcmeConfig {
-    /// Email for ACME account registration
     pub email: String,
 
-    /// Path to store ACME account and certificates
     #[serde(default = "default_acme_storage")]
     pub storage: String,
 
-    /// ACME CA server URL (defaults to Let's Encrypt production)
     #[serde(default)]
     pub ca_server: Option<String>,
 
-    /// Use Let's Encrypt staging server (for testing)
     #[serde(default)]
-    pub staging: bool,
+    pub key_type: Option<String>,
 
-    /// Domains to automatically obtain certificates for
     #[serde(default)]
-    pub domains: Vec<AcmeDomainConfig>,
-}
+    pub eab: Option<ExternalAccountBinding>,
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AcmeDomainConfig {
-    /// Primary domain (required)
-    pub main: String,
-
-    /// Subject Alternative Names (optional)
     #[serde(default)]
-    pub sans: Vec<String>,
+    pub certificate_duration: Option<Duration>,
+
+    #[serde(default)]
+    pub preferred_chain: Option<String>,
+
+    // Challenge types - only one should be set
+    #[serde(default)]
+    pub http_challenge: Option<HttpChallenge>,
+
+    #[serde(default)]
+    pub tls_challenge: Option<TlsChallenge>,
+
+    #[serde(default)]
+    pub dns_challenge: Option<DnsChallenge>,
 }
 
 fn default_acme_storage() -> String {
@@ -365,92 +1393,34 @@ fn default_acme_storage() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpFilterConfig {
-    /// IP addresses or CIDR ranges to allow (processed first)
-    #[serde(default)]
-    pub allow: Vec<String>,
+#[serde(rename_all = "camelCase")]
+pub struct ExternalAccountBinding {
+    pub kid: String,
 
-    /// IP addresses or CIDR ranges to deny
-    #[serde(default)]
-    pub deny: Vec<String>,
-
-    /// Default action when no rules match: "allow" or "deny"
-    #[serde(default = "default_ip_filter_default")]
-    pub default_action: String,
-}
-
-fn default_ip_filter_default() -> String {
-    "allow".to_string()
+    pub hmac_encoded: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CorsConfig {
-    /// Allowed origins (use "*" for all, or specific origins)
-    #[serde(default)]
-    pub allowed_origins: Vec<String>,
-
-    /// Allowed HTTP methods
-    #[serde(default = "default_cors_methods")]
-    pub allowed_methods: Vec<String>,
-
-    /// Allowed headers
-    #[serde(default = "default_cors_headers")]
-    pub allowed_headers: Vec<String>,
-
-    /// Headers to expose to the browser
-    #[serde(default)]
-    pub exposed_headers: Vec<String>,
-
-    /// Allow credentials (cookies, authorization headers)
-    #[serde(default)]
-    pub allow_credentials: bool,
-
-    /// Max age for preflight cache in seconds
-    #[serde(default = "default_cors_max_age")]
-    pub max_age_seconds: u64,
+#[serde(rename_all = "camelCase")]
+pub struct HttpChallenge {
+    pub entry_point: String,
 }
 
-fn default_cors_methods() -> Vec<String> {
-    vec![
-        "GET".to_string(),
-        "POST".to_string(),
-        "PUT".to_string(),
-        "DELETE".to_string(),
-        "OPTIONS".to_string(),
-    ]
-}
-
-fn default_cors_headers() -> Vec<String> {
-    vec![
-        "Content-Type".to_string(),
-        "Authorization".to_string(),
-        "X-Requested-With".to_string(),
-    ]
-}
-
-fn default_cors_max_age() -> u64 {
-    86400
-}
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TlsChallenge {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RedirectSchemeConfig {
-    /// Target scheme ("https" or "http")
-    #[serde(default = "default_redirect_scheme")]
-    pub scheme: String,
+#[serde(rename_all = "camelCase")]
+pub struct DnsChallenge {
+    pub provider: String,
 
-    /// Use permanent redirect (301) or temporary (302)
-    #[serde(default = "default_redirect_permanent")]
-    pub permanent: bool,
-
-    /// Port to redirect to (omit to use default port for scheme)
     #[serde(default)]
-    pub port: Option<u16>,
-}
+    pub delay_before_check: Option<Duration>,
 
-fn default_redirect_scheme() -> String {
-    "https".to_string()
-}
+    #[serde(default)]
+    pub resolvers: Vec<String>,
 
-fn default_redirect_permanent() -> bool {
-    true
+    #[serde(default)]
+    pub disable_propagation_check: bool,
 }

@@ -7,7 +7,7 @@ pub use acme::{
 };
 pub use resolver::CertificateResolver;
 
-use crate::config::{EntrypointTls, TlsConfig};
+use crate::config::TlsConfig;
 use anyhow::{Context, Result};
 use rustls::pki_types::CertificateDer;
 use rustls::server::ResolvesServerCert;
@@ -35,22 +35,6 @@ impl TlsAcceptor {
         }))
     }
 
-    pub fn from_entrypoint_tls(tls_config: &EntrypointTls) -> Result<Self> {
-        let cert_file = tls_config
-            .cert_file
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("cert_file is required for TLS"))?;
-        let key_file = tls_config
-            .key_file
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("key_file is required for TLS"))?;
-
-        let config = Self::build_server_config(cert_file, key_file)?;
-
-        Ok(Self {
-            config: Arc::new(config),
-        })
-    }
 
     pub fn from_files(cert_path: &str, key_path: &str) -> Result<Self> {
         let config = Self::build_server_config(cert_path, key_path)?;

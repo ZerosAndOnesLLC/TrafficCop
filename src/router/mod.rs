@@ -22,13 +22,13 @@ pub struct Route {
 impl Router {
     pub fn from_config(config: &Config) -> Self {
         let mut routes: Vec<Route> = config
-            .routers
+            .routers()
             .iter()
             .filter_map(|(name, router_config)| {
                 match RouteMatcher::from_rule(&router_config.rule) {
                     Ok(matcher) => Some(Route {
                         name: name.clone(),
-                        entrypoints: router_config.entrypoints.clone(),
+                        entrypoints: router_config.entry_points.clone(),
                         matcher,
                         service: router_config.service.clone(),
                         middlewares: router_config.middlewares.clone(),

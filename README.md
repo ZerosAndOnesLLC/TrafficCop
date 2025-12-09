@@ -1,28 +1,25 @@
-# Traffic Management
+# TrafficCop
 
-A high-performance reverse proxy and load balancer written in Rust, designed to handle 750k+ requests/second with predictable latency and zero garbage collection pauses.
+A high-performance reverse proxy and load balancer written in Rust with **Traefik v3 compatible configuration**. Designed to handle 750k+ requests/second with predictable latency and zero garbage collection pauses.
 
 ## Features
 
+- **Traefik v3 Compatible**: Drop-in replacement for Traefik using the same configuration format
 - **High Performance**: Built with Rust for maximum throughput and minimal latency
 - **Zero GC Pauses**: No garbage collector means consistent, predictable response times
 - **HTTP/1.1 & HTTP/2**: Automatic protocol detection with ALPN negotiation for TLS
 - **WebSocket Proxying**: Full WebSocket upgrade and bidirectional streaming support
 - **Hot Config Reload**: Configuration changes applied without restart or dropping connections
 - **Graceful Shutdown**: Connection draining with configurable timeout
-- **Load Balancing**: Round-robin, smooth weighted round-robin, least connections, random
+- **Load Balancing**: Round-robin, weighted, least connections, random
 - **Health Checks**: HTTP health checks with configurable thresholds
-- **Circuit Breaker**: Automatic backend isolation on failures with recovery
 - **TLS Termination**: Native TLS support via rustls (no OpenSSL dependency)
 - **Let's Encrypt ACME**: Automatic certificate provisioning and renewal
 - **SNI-based Certificates**: Multiple certificates per listener with automatic selection
-- **Request Timeouts**: Configurable connect and request timeouts per service
-- **Middleware Pipeline**: Rate limiting, headers, retry with exponential backoff, compression, IP filtering, CORS, HTTPS redirect, basic auth
-- **Compression**: gzip and brotli response compression
+- **Middleware Pipeline**: Rate limiting, headers, retry with exponential backoff, compression, IP filtering, CORS, HTTPS redirect, authentication
+- **Compression**: gzip, brotli, and zstd response compression
 - **Access Logging**: Structured JSON access logs
 - **Metrics**: Prometheus-compatible metrics endpoint
-- **Traefik-Compatible Rules**: Familiar rule syntax for routing
-- **Docker Ready**: Production-ready Dockerfile included
 
 ## Quick Start
 
@@ -46,42 +43,72 @@ cargo build --release
 
 ## Configuration
 
-Configuration is defined in YAML format. See `config/example.yaml` for a complete example.
+Configuration uses Traefik v3 format. See `config/example.yaml` for a complete example.
 
 ### Basic Example
 
 ```yaml
-entrypoints:
+# Entry points (static config)
+entryPoints:
   web:
-    address: "0.0.0.0:80"
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
   websecure:
-    address: "0.0.0.0:443"
-    tls:
-      cert_file: "/etc/certs/server.crt"
-      key_file: "/etc/certs/server.key"
+    address: ":443"
+    http:
+      tls:
+        certResolver: letsencrypt
 
-services:
-  api:
-    load_balancer:
-      strategy: round_robin
-    servers:
-      - url: "http://10.0.0.1:8080"
-      - url: "http://10.0.0.2:8080"
-    health_check:
-      path: "/health"
-      interval_seconds: 10
+# Dynamic HTTP config
+http:
+  routers:
+    api-router:
+      entryPoints:
+        - websecure
+      rule: "Host(`api.example.com`) && PathPrefix(`/v1`)"
+      service: api
+      middlewares:
+        - rate-limit
+      tls:
+        certResolver: letsencrypt
 
-routers:
-  api-router:
-    entrypoints:
-      - websecure
-    rule: "Host(`api.example.com`) && PathPrefix(`/v1`)"
-    service: api
+  services:
+    api:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.1:8080"
+          - url: "http://10.0.0.2:8080"
+        healthCheck:
+          path: "/health"
+          interval: "10s"
+          timeout: "5s"
+
+  middlewares:
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: "1s"
+
+# Certificate resolvers (ACME/Let's Encrypt)
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: "admin@example.com"
+      storage: "/data/acme.json"
+      httpChallenge:
+        entryPoint: web
 ```
 
 ### Routing Rules
 
-Rules use a Traefik-compatible syntax:
+Rules use Traefik-compatible syntax:
 
 | Function | Description | Example |
 |----------|-------------|---------|
@@ -95,120 +122,206 @@ Rules use a Traefik-compatible syntax:
 
 Combine rules with `&&` (AND), `||` (OR), and `!` (NOT).
 
-### Load Balancing Strategies
+### Duration Format
 
-- `round_robin` - Distribute requests evenly across servers
-- `weighted` - Distribute based on server weights
-- `least_conn` - Send to server with fewest active connections
-- `random` - Random server selection
+Durations use Go-style format (same as Traefik):
+- `100ms` - 100 milliseconds
+- `10s` - 10 seconds
+- `5m` - 5 minutes
+- `1h30m` - 1 hour 30 minutes
+
+### Services
+
+```yaml
+http:
+  services:
+    # Load balancer with health checks
+    api:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.1:8080"
+          - url: "http://10.0.0.2:8080"
+        passHostHeader: true
+        sticky:
+          cookie:
+            name: SERVERID
+            secure: true
+            httpOnly: true
+        healthCheck:
+          path: "/health"
+          interval: "10s"
+          timeout: "5s"
+
+    # Weighted service (traffic splitting)
+    canary:
+      weighted:
+        services:
+          - name: api-v1
+            weight: 90
+          - name: api-v2
+            weight: 10
+
+    # Mirroring service
+    shadow:
+      mirroring:
+        service: api
+        mirrors:
+          - name: shadow-api
+            percent: 10
+```
 
 ### Middlewares
 
 ```yaml
-middlewares:
-  rate-limit:
-    rate_limit:
-      average: 100
-      burst: 50
-      period_seconds: 1
+http:
+  middlewares:
+    # Rate limiting
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: "1s"
 
-  headers:
-    headers:
-      request_headers:
-        X-Request-ID: "${uuid}"
-      response_headers:
-        X-Frame-Options: "DENY"
+    # Custom headers
+    security-headers:
+      headers:
+        customResponseHeaders:
+          X-Frame-Options: "DENY"
+          X-Content-Type-Options: "nosniff"
+          Server: ""  # Empty value removes header
 
-  retry:
-    retry:
-      attempts: 3
-      initial_interval_ms: 100
-
-  circuit-breaker:
-    circuit_breaker:
-      failure_threshold: 5
-      recovery_timeout_seconds: 30
-
-  compress:
-    compress:
-      min_response_body_bytes: 1024
-
-  ip-filter:
-    ip_filter:
-      allow:
-        - "10.0.0.0/8"
-        - "192.168.1.0/24"
-      deny:
-        - "192.168.1.100"
-      default_action: "deny"
-
-  cors:
+    # CORS (via headers middleware)
     cors:
-      allowed_origins:
-        - "https://example.com"
-        - "https://app.example.com"
-      allowed_methods:
-        - "GET"
-        - "POST"
-        - "PUT"
-        - "DELETE"
-      allowed_headers:
-        - "Content-Type"
-        - "Authorization"
-      allow_credentials: true
-      max_age_seconds: 86400
+      headers:
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+        accessControlAllowOriginList:
+          - "https://example.com"
+        accessControlAllowCredentials: true
+        accessControlMaxAge: 86400
 
-  https-redirect:
-    redirect_scheme:
-      scheme: https
-      permanent: true
+    # Retry with exponential backoff
+    retry-middleware:
+      retry:
+        attempts: 3
+        initialInterval: "100ms"
 
-  basic-auth:
-    basic_auth:
-      users:
-        - "admin:secret123"
-        - "user:password"
-      realm: "Restricted Area"
+    # IP allow list
+    trusted-ips:
+      ipAllowList:
+        sourceRange:
+          - "10.0.0.0/8"
+          - "192.168.1.0/24"
+
+    # IP deny list
+    blocked-ips:
+      ipDenyList:
+        sourceRange:
+          - "192.168.1.100"
+
+    # Basic authentication
+    auth:
+      basicAuth:
+        users:
+          - "admin:$apr1$xyz..."  # htpasswd format
+
+    # HTTPS redirect
+    https-redirect:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+    # Strip path prefix
+    strip-api:
+      stripPrefix:
+        prefixes:
+          - "/api"
+
+    # Add path prefix
+    add-v1:
+      addPrefix:
+        prefix: "/v1"
+
+    # Compression
+    compress:
+      compress:
+        minResponseBodyBytes: 1024
+        encodings:
+          - zstd
+          - br
+          - gzip
+
+    # Circuit breaker
+    circuit-breaker:
+      circuitBreaker:
+        expression: "NetworkErrorRatio() > 0.5"
+        checkPeriod: "10s"
+        fallbackDuration: "30s"
+        recoveryDuration: "30s"
+
+    # Chain multiple middlewares
+    secure-chain:
+      chain:
+        middlewares:
+          - rate-limit
+          - security-headers
+          - auth
+```
+
+### TLS Configuration
+
+```yaml
+tls:
+  certificates:
+    - certFile: "/etc/certs/server.crt"
+      keyFile: "/etc/certs/server.key"
+
+  options:
+    default:
+      minVersion: "VersionTLS12"
+      cipherSuites:
+        - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+        - "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+      sniStrict: true
 ```
 
 ### ACME (Let's Encrypt)
 
-Automatic TLS certificate provisioning with Let's Encrypt:
-
 ```yaml
-tls:
-  acme:
-    email: "admin@example.com"
-    storage: "/data/acme.json"
-    staging: false  # Set true for testing
-    domains:
-      - main: "example.com"
-        sans:
-          - "www.example.com"
-      - main: "api.example.com"
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: "admin@example.com"
+      storage: "/data/acme.json"
+      # Use staging for testing
+      # caServer: "https://acme-staging-v02.api.letsencrypt.org/directory"
+      httpChallenge:
+        entryPoint: web
 
-entrypoints:
-  web:
-    address: "0.0.0.0:80"
-  websecure:
-    address: "0.0.0.0:443"
-    tls:
-      cert_resolver: "acme"  # Use ACME for this entrypoint
+http:
+  routers:
+    secure-router:
+      rule: "Host(`example.com`)"
+      service: api
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "example.com"
+            sans:
+              - "www.example.com"
 ```
-
-HTTP-01 challenges are handled automatically on port 80. Certificates are:
-- Automatically obtained on startup
-- Renewed 30 days before expiry
-- Stored in the specified storage file
-- Selected via SNI for multi-domain support
 
 ### Metrics
 
-Enable Prometheus metrics endpoint:
-
 ```yaml
 metrics:
-  address: "0.0.0.0:9090"
+  prometheus:
+    address: ":9090"
+    addEntryPointsLabels: true
+    addServicesLabels: true
 ```
 
 Access metrics at `http://localhost:9090/metrics`.
@@ -218,7 +331,7 @@ Access metrics at `http://localhost:9090/metrics`.
 ```
 ┌─────────────────────────────────────┐
 │         Entry Points                │
-│   (HTTP/HTTPS/TCP/UDP Listeners)    │
+│   (HTTP/HTTPS Listeners)            │
 └──────────────┬──────────────────────┘
                │
 ┌──────────────▼──────────────────────┐
@@ -311,7 +424,7 @@ traffic_management/
 ├── src/
 │   ├── main.rs          # CLI entry point
 │   ├── lib.rs           # Library entry point
-│   ├── config/          # Configuration parsing
+│   ├── config/          # Configuration parsing (Traefik-compatible)
 │   ├── server/          # HTTP listeners
 │   ├── router/          # Rule matching engine
 │   ├── proxy/           # Request proxying
@@ -322,7 +435,8 @@ traffic_management/
 │   ├── tls/             # TLS/ACME
 │   └── metrics/         # Prometheus metrics
 ├── config/
-│   └── example.yaml     # Example configuration
+│   ├── example.yaml     # Full example configuration
+│   └── test.yaml        # Test configuration
 └── benches/
     └── proxy_benchmark.rs
 ```

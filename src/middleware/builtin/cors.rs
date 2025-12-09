@@ -1,4 +1,4 @@
-use crate::config::CorsConfig;
+use crate::config::HeadersConfig;
 use hyper::header::{
     HeaderValue, ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS,
     ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS,
@@ -8,6 +8,7 @@ use hyper::header::{
 use hyper::{HeaderMap, Method, Request, Response, StatusCode};
 
 /// CORS middleware for handling Cross-Origin Resource Sharing
+/// In Traefik, CORS is handled through the headers middleware
 pub struct CorsMiddleware {
     allowed_origins: Vec<String>,
     allow_all_origins: bool,
@@ -17,44 +18,61 @@ pub struct CorsMiddleware {
     exposed_headers: Option<String>,
     allow_credentials: bool,
     max_age: Option<String>,
+    add_vary_header: bool,
 }
 
 impl CorsMiddleware {
-    pub fn new(config: CorsConfig) -> Self {
-        let allow_all_origins = config.allowed_origins.iter().any(|o| o == "*");
+    /// Create CORS middleware from HeadersConfig (Traefik format)
+    pub fn from_headers_config(config: &HeadersConfig) -> Option<Self> {
+        // Only create if CORS is configured
+        if config.access_control_allow_origin_list.is_empty()
+            && config.access_control_allow_origin_list_regex.is_empty()
+        {
+            return None;
+        }
 
-        let allowed_methods = config.allowed_methods.join(", ");
+        let allow_all_origins = config
+            .access_control_allow_origin_list
+            .iter()
+            .any(|o| o == "*");
+
+        let allowed_methods = if config.access_control_allow_methods.is_empty() {
+            "GET, POST, PUT, DELETE, OPTIONS".to_string()
+        } else {
+            config.access_control_allow_methods.join(", ")
+        };
 
         let allowed_headers_set: Vec<String> = config
-            .allowed_headers
+            .access_control_allow_headers
             .iter()
             .map(|h| h.to_lowercase())
             .collect();
 
-        let allowed_headers = config.allowed_headers.join(", ");
-
-        let exposed_headers = if config.exposed_headers.is_empty() {
-            None
+        let allowed_headers = if config.access_control_allow_headers.is_empty() {
+            "Content-Type, Authorization".to_string()
         } else {
-            Some(config.exposed_headers.join(", "))
+            config.access_control_allow_headers.join(", ")
         };
 
-        let max_age = if config.max_age_seconds > 0 {
-            Some(config.max_age_seconds.to_string())
-        } else {
+        let exposed_headers = if config.access_control_expose_headers.is_empty() {
             None
+        } else {
+            Some(config.access_control_expose_headers.join(", "))
         };
 
-        Self {
-            allowed_origins: config.allowed_origins,
+        let max_age = config.access_control_max_age.map(|v| v.to_string());
+
+        Some(Self {
+            allowed_origins: config.access_control_allow_origin_list.clone(),
             allow_all_origins,
             allowed_methods,
             allowed_headers,
             allowed_headers_set,
             exposed_headers,
-            allow_credentials: config.allow_credentials,
+            allow_credentials: config.access_control_allow_credentials,
             max_age,
-        }
+            add_vary_header: config.add_vary_header,
+        })
     }
 
     /// Check if this is a preflight request (OPTIONS with CORS headers)
@@ -153,7 +171,12 @@ impl CorsMiddleware {
         }
 
         // Add Vary header for caching
-        builder = builder.header(VARY, "Origin, Access-Control-Request-Method, Access-Control-Request-Headers");
+        if self.add_vary_header {
+            builder = builder.header(
+                VARY,
+                "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+            );
+        }
 
         Some(builder.body(()).unwrap())
     }
@@ -192,7 +215,9 @@ impl CorsMiddleware {
         }
 
         // Add Vary header
-        headers.insert(VARY, HeaderValue::from_static("Origin"));
+        if self.add_vary_header {
+            headers.insert(VARY, HeaderValue::from_static("Origin"));
+        }
     }
 
     /// Get origin from request headers
@@ -208,11 +233,7 @@ impl CorsMiddleware {
 fn is_simple_header(header: &str) -> bool {
     matches!(
         header,
-        "accept"
-            | "accept-language"
-            | "content-language"
-            | "content-type"
-            | "range"
+        "accept" | "accept-language" | "content-language" | "content-type" | "range"
     )
 }
 
@@ -220,20 +241,25 @@ fn is_simple_header(header: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn test_config() -> CorsConfig {
-        CorsConfig {
-            allowed_origins: vec!["https://example.com".to_string()],
-            allowed_methods: vec!["GET".to_string(), "POST".to_string()],
-            allowed_headers: vec!["Content-Type".to_string(), "Authorization".to_string()],
-            exposed_headers: vec![],
-            allow_credentials: false,
-            max_age_seconds: 86400,
+    fn test_config() -> HeadersConfig {
+        HeadersConfig {
+            access_control_allow_origin_list: vec!["https://example.com".to_string()],
+            access_control_allow_methods: vec!["GET".to_string(), "POST".to_string()],
+            access_control_allow_headers: vec![
+                "Content-Type".to_string(),
+                "Authorization".to_string(),
+            ],
+            access_control_expose_headers: vec![],
+            access_control_allow_credentials: false,
+            access_control_max_age: Some(86400),
+            add_vary_header: true,
+            ..Default::default()
         }
     }
 
     #[test]
     fn test_origin_allowed() {
-        let cors = CorsMiddleware::new(test_config());
+        let cors = CorsMiddleware::from_headers_config(&test_config()).unwrap();
 
         assert!(cors.is_origin_allowed("https://example.com"));
         assert!(!cors.is_origin_allowed("https://evil.com"));
@@ -242,15 +268,15 @@ mod tests {
     #[test]
     fn test_wildcard_origin() {
         let mut config = test_config();
-        config.allowed_origins = vec!["*".to_string()];
-        let cors = CorsMiddleware::new(config);
+        config.access_control_allow_origin_list = vec!["*".to_string()];
+        let cors = CorsMiddleware::from_headers_config(&config).unwrap();
 
         assert!(cors.is_origin_allowed("https://anything.com"));
     }
 
     #[test]
     fn test_preflight_detection() {
-        let cors = CorsMiddleware::new(test_config());
+        let cors = CorsMiddleware::from_headers_config(&test_config()).unwrap();
 
         let req = Request::builder()
             .method(Method::OPTIONS)
@@ -272,7 +298,7 @@ mod tests {
 
     #[test]
     fn test_preflight_response() {
-        let cors = CorsMiddleware::new(test_config());
+        let cors = CorsMiddleware::from_headers_config(&test_config()).unwrap();
 
         let req = Request::builder()
             .method(Method::OPTIONS)
@@ -292,8 +318,8 @@ mod tests {
     #[test]
     fn test_credentials_with_specific_origin() {
         let mut config = test_config();
-        config.allow_credentials = true;
-        let cors = CorsMiddleware::new(config);
+        config.access_control_allow_credentials = true;
+        let cors = CorsMiddleware::from_headers_config(&config).unwrap();
 
         let req = Request::builder()
             .method(Method::OPTIONS)

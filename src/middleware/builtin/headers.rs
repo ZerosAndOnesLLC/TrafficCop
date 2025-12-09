@@ -3,6 +3,7 @@ use hyper::header::{HeaderName, HeaderValue};
 use hyper::HeaderMap;
 
 /// Headers middleware for adding/removing request and response headers
+/// In Traefik, empty header values mean "remove this header"
 pub struct HeadersMiddleware {
     #[allow(dead_code)]
     config: HeadersConfig,
@@ -15,37 +16,33 @@ pub struct HeadersMiddleware {
 
 impl HeadersMiddleware {
     pub fn new(config: HeadersConfig) -> Self {
-        let request_headers = config
-            .request_headers
-            .iter()
-            .filter_map(|(k, v)| {
-                let name = HeaderName::try_from(k.as_str()).ok()?;
-                let value = HeaderValue::from_str(v).ok()?;
-                Some((name, value))
-            })
-            .collect();
+        let mut request_headers = Vec::new();
+        let mut remove_request = Vec::new();
 
-        let response_headers = config
-            .response_headers
-            .iter()
-            .filter_map(|(k, v)| {
-                let name = HeaderName::try_from(k.as_str()).ok()?;
-                let value = HeaderValue::from_str(v).ok()?;
-                Some((name, value))
-            })
-            .collect();
+        for (k, v) in &config.custom_request_headers {
+            if let Ok(name) = HeaderName::try_from(k.as_str()) {
+                if v.is_empty() {
+                    // Empty value means remove the header (Traefik convention)
+                    remove_request.push(name);
+                } else if let Ok(value) = HeaderValue::from_str(v) {
+                    request_headers.push((name, value));
+                }
+            }
+        }
 
-        let remove_request = config
-            .remove_request_headers
-            .iter()
-            .filter_map(|k| HeaderName::try_from(k.as_str()).ok())
-            .collect();
+        let mut response_headers = Vec::new();
+        let mut remove_response = Vec::new();
 
-        let remove_response = config
-            .remove_response_headers
-            .iter()
-            .filter_map(|k| HeaderName::try_from(k.as_str()).ok())
-            .collect();
+        for (k, v) in &config.custom_response_headers {
+            if let Ok(name) = HeaderName::try_from(k.as_str()) {
+                if v.is_empty() {
+                    // Empty value means remove the header (Traefik convention)
+                    remove_response.push(name);
+                } else if let Ok(value) = HeaderValue::from_str(v) {
+                    response_headers.push((name, value));
+                }
+            }
+        }
 
         Self {
             config,
@@ -88,19 +85,13 @@ impl HeadersMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[test]
     fn test_add_headers() {
-        let mut request_headers = HashMap::new();
-        request_headers.insert("X-Custom".to_string(), "value".to_string());
-
-        let config = HeadersConfig {
-            request_headers,
-            response_headers: HashMap::new(),
-            remove_request_headers: vec![],
-            remove_response_headers: vec![],
-        };
+        let mut config = HeadersConfig::default();
+        config
+            .custom_request_headers
+            .insert("X-Custom".to_string(), "value".to_string());
 
         let middleware = HeadersMiddleware::new(config);
         let mut headers = HeaderMap::new();
@@ -111,13 +102,12 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_headers() {
-        let config = HeadersConfig {
-            request_headers: HashMap::new(),
-            response_headers: HashMap::new(),
-            remove_request_headers: vec!["Server".to_string()],
-            remove_response_headers: vec![],
-        };
+    fn test_remove_headers_with_empty_value() {
+        let mut config = HeadersConfig::default();
+        // Empty value means "remove"
+        config
+            .custom_request_headers
+            .insert("Server".to_string(), "".to_string());
 
         let middleware = HeadersMiddleware::new(config);
         let mut headers = HeaderMap::new();
@@ -126,5 +116,20 @@ mod tests {
         middleware.apply_request(&mut headers);
 
         assert!(headers.get("server").is_none());
+    }
+
+    #[test]
+    fn test_add_response_headers() {
+        let mut config = HeadersConfig::default();
+        config
+            .custom_response_headers
+            .insert("X-Frame-Options".to_string(), "DENY".to_string());
+
+        let middleware = HeadersMiddleware::new(config);
+        let mut headers = HeaderMap::new();
+
+        middleware.apply_response(&mut headers);
+
+        assert_eq!(headers.get("x-frame-options").unwrap(), "DENY");
     }
 }

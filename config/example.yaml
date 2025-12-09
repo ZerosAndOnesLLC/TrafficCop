@@ -1,132 +1,185 @@
-# Traffic Management Configuration Example
-# High-performance reverse proxy and load balancer
+# TrafficCop Configuration Example
+# Traefik v3 compatible configuration format
 
-# Entrypoints define the addresses the proxy listens on
-entrypoints:
+# Entry points define the addresses the proxy listens on
+entryPoints:
   web:
-    address: "0.0.0.0:80"
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
 
   websecure:
-    address: "0.0.0.0:443"
-    tls:
-      cert_file: "/etc/certs/server.crt"
-      key_file: "/etc/certs/server.key"
+    address: ":443"
+    http:
+      tls:
+        certResolver: letsencrypt
 
-# Services define backend server pools
-services:
-  api:
-    load_balancer:
-      strategy: round_robin
-      sticky:
-        cookie_name: "SERVERID"
-        ttl_seconds: 3600
-    servers:
-      - url: "http://10.0.0.1:8080"
-        weight: 1
-      - url: "http://10.0.0.2:8080"
-        weight: 1
-      - url: "http://10.0.0.3:8080"
-        weight: 1
-    health_check:
-      path: "/health"
-      interval_seconds: 10
-      timeout_seconds: 5
-      healthy_threshold: 2
-      unhealthy_threshold: 3
+# Dynamic HTTP routing configuration
+http:
+  # Routers define how requests are matched to services
+  routers:
+    api-router:
+      entryPoints:
+        - websecure
+      rule: "Host(`api.example.com`) && PathPrefix(`/v1`)"
+      service: api
+      middlewares:
+        - rate-limit
+        - auth-headers
+      priority: 100
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: api.example.com
 
-  webapp:
-    load_balancer:
-      strategy: least_conn
-    servers:
-      - url: "http://10.0.1.1:3000"
-        weight: 1
-      - url: "http://10.0.1.2:3000"
-        weight: 1
-    health_check:
-      path: "/"
-      interval_seconds: 15
+    api-public:
+      entryPoints:
+        - web
+        - websecure
+      rule: "Host(`api.example.com`) && PathPrefix(`/public`)"
+      service: api
+      priority: 90
 
-  static:
-    servers:
-      - url: "http://10.0.2.1:80"
+    webapp-router:
+      entryPoints:
+        - web
+        - websecure
+      rule: "Host(`app.example.com`)"
+      service: webapp
+      middlewares:
+        - compress
+      priority: 50
 
-# Routers define how requests are matched to services
-routers:
-  api-router:
-    entrypoints:
-      - websecure
-    rule: "Host(`api.example.com`) && PathPrefix(`/v1`)"
-    service: api
-    middlewares:
-      - rate-limit
-      - auth-headers
-    priority: 100
+    static-router:
+      entryPoints:
+        - web
+      rule: "Host(`static.example.com`) || PathPrefix(`/static`)"
+      service: static
+      priority: 10
 
-  api-public:
-    entrypoints:
-      - web
-      - websecure
-    rule: "Host(`api.example.com`) && PathPrefix(`/public`)"
-    service: api
-    priority: 90
+  # Services define backend server pools
+  services:
+    api:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.1:8080"
+          - url: "http://10.0.0.2:8080"
+          - url: "http://10.0.0.3:8080"
+        sticky:
+          cookie:
+            name: SERVERID
+            secure: true
+            httpOnly: true
+        healthCheck:
+          path: "/health"
+          interval: "10s"
+          timeout: "5s"
+        passHostHeader: true
 
-  webapp-router:
-    entrypoints:
-      - web
-      - websecure
-    rule: "Host(`app.example.com`)"
-    service: webapp
-    middlewares:
-      - compress
-    priority: 50
+    webapp:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.1.1:3000"
+          - url: "http://10.0.1.2:3000"
+        healthCheck:
+          path: "/"
+          interval: "15s"
 
-  static-router:
-    entrypoints:
-      - web
-    rule: "Host(`static.example.com`) || PathPrefix(`/static`)"
-    service: static
-    priority: 10
+    static:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.2.1:80"
 
-# Middlewares define request/response transformations
-middlewares:
-  rate-limit:
-    rate_limit:
-      average: 100
-      burst: 50
-      period_seconds: 1
+  # Middlewares define request/response transformations
+  middlewares:
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: "1s"
 
-  auth-headers:
-    headers:
-      request_headers:
-        X-Request-ID: "${uuid}"
-      response_headers:
-        X-Frame-Options: "DENY"
-        X-Content-Type-Options: "nosniff"
-      remove_response_headers:
-        - "Server"
+    auth-headers:
+      headers:
+        customRequestHeaders:
+          X-Request-ID: "${uuid}"
+        customResponseHeaders:
+          X-Frame-Options: "DENY"
+          X-Content-Type-Options: "nosniff"
+          # Empty value removes the header
+          Server: ""
 
-  compress:
     compress:
-      min_response_body_bytes: 1024
+      compress:
+        minResponseBodyBytes: 1024
 
-  retry:
-    retry:
-      attempts: 3
-      initial_interval_ms: 100
+    retry-middleware:
+      retry:
+        attempts: 3
+        initialInterval: "100ms"
 
-  circuit-breaker:
-    circuit_breaker:
-      failure_threshold: 5
-      recovery_timeout_seconds: 30
+    strip-api:
+      stripPrefix:
+        prefixes:
+          - "/api"
+
+    add-prefix:
+      addPrefix:
+        prefix: "/v1"
+
+    redirect-https:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+  # ServersTransport for backend connection settings
+  serversTransports:
+    secure-transport:
+      insecureSkipVerify: false
+      maxIdleConnsPerHost: 200
+      forwardingTimeouts:
+        dialTimeout: "30s"
+        idleConnTimeout: "90s"
 
 # TLS configuration
 tls:
   certificates:
-    - cert_file: "/etc/certs/server.crt"
-      key_file: "/etc/certs/server.key"
+    - certFile: "/etc/certs/server.crt"
+      keyFile: "/etc/certs/server.key"
 
-  # ACME (Let's Encrypt) configuration
-  # acme:
-  #   email: "admin@example.com"
-  #   storage: "/etc/acme/acme.json"
-  #   ca_server: "https://acme-v02.api.letsencrypt.org/directory"
+  options:
+    default:
+      minVersion: "VersionTLS12"
+      cipherSuites:
+        - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+        - "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+      sniStrict: true
+
+# Certificate resolvers (ACME / Let's Encrypt)
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: "admin@example.com"
+      storage: "/etc/acme/acme.json"
+      # Use staging for testing: https://acme-staging-v02.api.letsencrypt.org/directory
+      # caServer: "https://acme-v02.api.letsencrypt.org/directory"
+      httpChallenge:
+        entryPoint: web
+
+# Metrics configuration
+metrics:
+  prometheus:
+    address: ":9090"
+    addEntryPointsLabels: true
+    addServicesLabels: true
+
+# Logging
+log:
+  level: "INFO"
+
+accessLog:
+  filePath: "/var/log/trafficcop/access.log"
+  format: "json"

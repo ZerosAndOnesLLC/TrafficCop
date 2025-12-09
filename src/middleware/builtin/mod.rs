@@ -13,7 +13,7 @@ pub use basic_auth::BasicAuthMiddleware;
 pub use compress::{CompressMiddleware, CompressionAlgorithm};
 pub use cors::CorsMiddleware;
 pub use headers::HeadersMiddleware;
-pub use ip_filter::IpFilterMiddleware;
+pub use ip_filter::{IpAllowListMiddleware, IpDenyListMiddleware};
 pub use rate_limit::RateLimitMiddleware;
 pub use redirect_scheme::RedirectSchemeMiddleware;
 pub use retry::{RetryIterator, RetryMiddleware};

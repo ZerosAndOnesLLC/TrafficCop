@@ -1,15 +1,15 @@
 use super::Balancer;
-use crate::config::ServerConfig;
+use crate::config::Server;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 pub struct RoundRobinBalancer {
-    servers: Vec<ServerConfig>,
+    servers: Vec<Server>,
     healthy: Vec<AtomicBool>,
     counter: AtomicUsize,
 }
 
 impl RoundRobinBalancer {
-    pub fn new(servers: Vec<ServerConfig>) -> Self {
+    pub fn new(servers: Vec<Server>) -> Self {
         let healthy = servers.iter().map(|_| AtomicBool::new(true)).collect();
         Self {
             servers,
@@ -20,7 +20,7 @@ impl RoundRobinBalancer {
 }
 
 impl Balancer for RoundRobinBalancer {
-    fn next_server(&self) -> Option<&ServerConfig> {
+    fn next_server(&self) -> Option<&Server> {
         if self.servers.is_empty() {
             return None;
         }
@@ -58,11 +58,12 @@ impl Balancer for RoundRobinBalancer {
 mod tests {
     use super::*;
 
-    fn make_servers(count: usize) -> Vec<ServerConfig> {
+    fn make_servers(count: usize) -> Vec<Server> {
         (0..count)
-            .map(|i| ServerConfig {
+            .map(|i| Server {
                 url: format!("http://server{}:8080", i),
                 weight: 1,
+                preserve_path: false,
             })
             .collect()
     }

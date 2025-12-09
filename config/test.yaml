@@ -1,27 +1,25 @@
 # Test configuration for local development
+# Traefik v3 compatible configuration format
 # Run with: cargo run -- -c config/test.yaml
 
-entrypoints:
+entryPoints:
   web:
     address: "127.0.0.1:8080"
 
-services:
-  httpbin:
-    load_balancer:
-      strategy: round_robin
-    servers:
-      - url: "http://httpbin.org"
-        weight: 1
+http:
+  routers:
+    httpbin-router:
+      rule: "PathPrefix(`/`)"
+      service: httpbin
+      priority: 1
 
-  echo:
-    load_balancer:
-      strategy: round_robin
-    servers:
-      - url: "http://httpbin.org"
-        weight: 1
+  services:
+    httpbin:
+      loadBalancer:
+        servers:
+          - url: "http://httpbin.org"
 
-routers:
-  httpbin-router:
-    rule: "PathPrefix(`/`)"
-    service: httpbin
-    priority: 1
+    echo:
+      loadBalancer:
+        servers:
+          - url: "http://httpbin.org"

@@ -1,5 +1,5 @@
 use super::Balancer;
-use crate::config::ServerConfig;
+use crate::config::Server;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// Least connections load balancer
@@ -9,13 +9,13 @@ pub struct LeastConnBalancer {
 }
 
 struct LeastConnServer {
-    config: ServerConfig,
+    config: Server,
     healthy: AtomicBool,
     active_connections: AtomicUsize,
 }
 
 impl LeastConnBalancer {
-    pub fn new(servers: Vec<ServerConfig>) -> Self {
+    pub fn new(servers: Vec<Server>) -> Self {
         let servers = servers
             .into_iter()
             .map(|config| LeastConnServer {
@@ -44,7 +44,7 @@ impl LeastConnBalancer {
 }
 
 impl Balancer for LeastConnBalancer {
-    fn next_server(&self) -> Option<&ServerConfig> {
+    fn next_server(&self) -> Option<&Server> {
         if self.servers.is_empty() {
             return None;
         }
@@ -92,11 +92,12 @@ impl Balancer for LeastConnBalancer {
 mod tests {
     use super::*;
 
-    fn make_servers(count: usize) -> Vec<ServerConfig> {
+    fn make_servers(count: usize) -> Vec<Server> {
         (0..count)
-            .map(|i| ServerConfig {
+            .map(|i| Server {
                 url: format!("http://server{}:8080", i),
                 weight: 1,
+                preserve_path: false,
             })
             .collect()
     }

@@ -11,10 +11,13 @@ pub struct RedirectSchemeMiddleware {
 
 impl RedirectSchemeMiddleware {
     pub fn new(config: RedirectSchemeConfig) -> Self {
+        // Parse port from string to u16
+        let port = config.port.as_ref().and_then(|p| p.parse::<u16>().ok());
+
         Self {
             scheme: config.scheme.to_lowercase(),
             permanent: config.permanent,
-            port: config.port,
+            port,
         }
     }
 
@@ -129,7 +132,7 @@ mod tests {
         let config = RedirectSchemeConfig {
             scheme: "https".to_string(),
             permanent: false,
-            port: Some(8443),
+            port: Some("8443".to_string()),
         };
         let middleware = RedirectSchemeMiddleware::new(config);
 
@@ -172,7 +175,7 @@ mod tests {
         let config = RedirectSchemeConfig {
             scheme: "https".to_string(),
             permanent: true,
-            port: Some(443),
+            port: Some("443".to_string()),
         };
         let middleware = RedirectSchemeMiddleware::new(config);
 

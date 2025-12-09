@@ -2,8 +2,8 @@ pub mod builtin;
 mod chain;
 
 pub use builtin::{
-    BasicAuthMiddleware, CorsMiddleware, HeadersMiddleware, IpFilterMiddleware,
-    RateLimitMiddleware, RedirectSchemeMiddleware,
+    BasicAuthMiddleware, CorsMiddleware, HeadersMiddleware, IpAllowListMiddleware,
+    IpDenyListMiddleware, RateLimitMiddleware, RedirectSchemeMiddleware,
 };
 pub use chain::MiddlewareChain;
 

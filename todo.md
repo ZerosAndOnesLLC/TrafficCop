@@ -1,6 +1,51 @@
 # TrafficCop - Remaining Features
 
-High-performance reverse proxy and load balancer. Current version: **v0.5.0**
+High-performance reverse proxy and load balancer. Current version: **v0.6.0**
+
+---
+
+## ✅ Traefik Config Compatibility (COMPLETED)
+
+TrafficCop now uses **Traefik v3 compatible configuration format**. Existing Traefik configs should work with minimal modifications.
+
+### Completed Items
+
+- [x] **Restructured config to match Traefik format**
+  - Dynamic config uses `http.routers`, `http.services`, `http.middlewares`
+  - Static config uses `entryPoints`, `certificatesResolvers`, `providers`
+  - All field names use camelCase
+
+- [x] **Go-style duration string parsing**
+  - Supports: "300ms", "1.5s", "2m", "1h30m", "24h"
+  - Used in all timeout and interval configurations
+
+- [x] **EntryPoints (static config)**
+  - Address, forwardedHeaders, http redirections, transport timeouts
+
+- [x] **Middlewares (camelCase format)**
+  - rateLimit, ipAllowList, ipDenyList
+  - headers (with CORS fields)
+  - basicAuth, digestAuth, forwardAuth
+  - compress, retry, circuitBreaker
+  - redirectScheme, redirectRegex
+  - stripPrefix, stripPrefixRegex, addPrefix
+  - replacePath, replacePathRegex
+  - chain, buffering, inFlightReq
+
+- [x] **Services**
+  - loadBalancer with servers, sticky, healthCheck, serversTransport
+  - weighted service (config parsing, routing TODO)
+  - mirroring service (config parsing, mirroring TODO)
+
+- [x] **Routers**
+  - entryPoints, rule, service, middlewares, priority
+  - tls with certResolver, domains, options
+
+- [x] **TLS Configuration**
+  - certificates, options, stores
+  - certificatesResolvers with ACME support
+
+- [x] **Updated example configs and documentation**
 
 ---
 
@@ -13,6 +58,7 @@ High-performance reverse proxy and load balancer. Current version: **v0.5.0**
 - [x] Hot config reload
 - [x] Graceful shutdown with connection draining
 - [x] Request/connect timeouts
+- [x] Traefik v3 config format
 
 ### TLS & Security
 - [x] Let's Encrypt ACME - Automatic certificate provisioning
@@ -31,9 +77,9 @@ High-performance reverse proxy and load balancer. Current version: **v0.5.0**
 - [x] Rate limiting (token bucket)
 - [x] Header manipulation
 - [x] Retry with exponential backoff
-- [x] Compression (gzip, brotli)
-- [x] IP allowlist/blocklist (CIDR)
-- [x] CORS middleware
+- [x] Compression (gzip, brotli, zstd)
+- [x] IP allowlist/denylist (CIDR)
+- [x] CORS (via headers middleware)
 - [x] HTTPS redirect
 - [x] Basic authentication
 
@@ -52,17 +98,33 @@ High-performance reverse proxy and load balancer. Current version: **v0.5.0**
 
 ---
 
+## 🔴 HIGH PRIORITY - Implementation Needed
+
+### Service Routing (config parsing complete, routing TODO)
+- [ ] Weighted service routing (traffic splitting between services)
+- [ ] Mirroring service (shadow traffic to secondary service)
+
+### Middlewares (config parsing complete, implementation TODO)
+- [ ] forwardAuth - External authentication delegation
+- [ ] stripPrefix - Remove path prefix
+- [ ] addPrefix - Add path prefix
+- [ ] replacePath - Replace entire path
+- [ ] replacePathRegex - Regex path replacement
+- [ ] buffering - Request/response buffering
+- [ ] chain - Compose multiple middlewares
+
+---
+
 ## 🟡 Medium Priority
 
 ### Security
-- [ ] Forward authentication (delegate to external service)
+- [ ] Digest authentication implementation
 - [ ] JWT validation middleware
 - [ ] mTLS (client certificates)
 
 ### Features
-- [ ] Sticky sessions (cookie-based affinity)
+- [ ] Sticky sessions (config ready, implementation TODO)
 - [ ] HTTP/2 upstream connections
-- [ ] Request buffering
 - [ ] Query parameter routing
 
 ### Observability
@@ -80,9 +142,8 @@ High-performance reverse proxy and load balancer. Current version: **v0.5.0**
 - [ ] UDP proxying
 
 ### Advanced Traffic
-- [ ] Request mirroring/shadowing
-- [ ] Canary deployments (traffic splitting)
 - [ ] A/B testing support
+- [ ] Canary deployment helpers
 
 ### Dynamic Configuration
 - [ ] HTTP API provider
@@ -95,54 +156,6 @@ High-performance reverse proxy and load balancer. Current version: **v0.5.0**
 - [ ] NUMA-aware scheduling
 - [ ] io_uring support (Linux)
 - [ ] Memory limits and backpressure
-
----
-
-## Implementation Notes
-
-### IP Allowlist/Blocklist
-```yaml
-middlewares:
-  ip-filter:
-    ip_filter:
-      allow:
-        - "10.0.0.0/8"
-        - "192.168.1.0/24"
-      deny:
-        - "192.168.1.100"
-```
-
-### CORS Middleware
-```yaml
-middlewares:
-  cors:
-    cors:
-      allowed_origins: ["https://example.com"]
-      allowed_methods: ["GET", "POST", "PUT", "DELETE"]
-      allowed_headers: ["Content-Type", "Authorization"]
-      max_age_seconds: 86400
-```
-
-### HTTPS Redirect
-```yaml
-middlewares:
-  https-redirect:
-    redirect_scheme:
-      scheme: https
-      permanent: true
-```
-
-### ACME Configuration
-```yaml
-tls:
-  acme:
-    email: "admin@example.com"
-    storage: "/data/acme.json"
-    ca_server: "https://acme-v02.api.letsencrypt.org/directory"
-    domains:
-      - "example.com"
-      - "*.example.com"
-```
 
 ---
 
