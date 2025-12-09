@@ -1,6 +1,6 @@
 # TrafficCop - Remaining Features
 
-High-performance reverse proxy and load balancer. Current version: **v0.6.0**
+High-performance reverse proxy and load balancer. Current version: **v0.8.0**
 
 ---
 
@@ -98,32 +98,36 @@ TrafficCop now uses **Traefik v3 compatible configuration format**. Existing Tra
 
 ---
 
-## 🔴 HIGH PRIORITY - Implementation Needed
+## ✅ Service Routing (COMPLETED v0.7.0)
 
-### Service Routing (config parsing complete, routing TODO)
-- [ ] Weighted service routing (traffic splitting between services)
-- [ ] Mirroring service (shadow traffic to secondary service)
+- [x] Weighted service routing (traffic splitting between services)
+- [x] Mirroring service (shadow traffic to secondary service)
 
-### Middlewares (config parsing complete, implementation TODO)
-- [ ] forwardAuth - External authentication delegation
-- [ ] stripPrefix - Remove path prefix
-- [ ] addPrefix - Add path prefix
-- [ ] replacePath - Replace entire path
-- [ ] replacePathRegex - Regex path replacement
-- [ ] buffering - Request/response buffering
-- [ ] chain - Compose multiple middlewares
+## ✅ Path Middlewares (COMPLETED v0.7.0)
+
+- [x] forwardAuth - External authentication delegation
+- [x] stripPrefix - Remove path prefix
+- [x] stripPrefixRegex - Remove prefix with regex
+- [x] addPrefix - Add path prefix
+- [x] replacePath - Replace entire path
+- [x] replacePathRegex - Regex path replacement
+- [x] buffering - Request/response buffering config
+- [x] chain - Compose multiple middlewares
+
+---
+
+## ✅ Authentication & Security (COMPLETED v0.8.0)
+
+- [x] Digest authentication (RFC 7616 with MD5)
+- [x] JWT validation middleware (HS256, HS384, HS512)
+- [x] Sticky sessions (cookie-based session affinity)
+- [x] mTLS (mutual TLS with client certificates)
 
 ---
 
 ## 🟡 Medium Priority
 
-### Security
-- [ ] Digest authentication implementation
-- [ ] JWT validation middleware
-- [ ] mTLS (client certificates)
-
 ### Features
-- [ ] Sticky sessions (config ready, implementation TODO)
 - [ ] HTTP/2 upstream connections
 - [ ] Query parameter routing
 

@@ -1,10 +1,12 @@
 pub mod acme;
+pub mod mtls;
 mod resolver;
 
 pub use acme::{
     try_handle_challenge, AcmeClient, AcmeManager, AcmeManagerBuilder, ChallengeHandler,
     PendingChallenge, StorageManager, StoredCertificate,
 };
+pub use mtls::{ClientAuthMode, ClientCertInfo, MtlsConfigBuilder};
 pub use resolver::CertificateResolver;
 
 use crate::config::TlsConfig;

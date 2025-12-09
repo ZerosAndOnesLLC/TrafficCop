@@ -709,6 +709,9 @@ pub struct MiddlewareConfig {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grpc_web: Option<GrpcWebConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jwt: Option<JwtConfig>,
 }
 
 impl MiddlewareConfig {
@@ -737,6 +740,7 @@ impl MiddlewareConfig {
         else if self.pass_tls_client_cert.is_some() { "passTLSClientCert" }
         else if self.content_type.is_some() { "contentType" }
         else if self.grpc_web.is_some() { "grpcWeb" }
+        else if self.jwt.is_some() { "jwt" }
         else { "unknown" }
     }
 }
@@ -988,6 +992,66 @@ pub struct ForwardAuthTls {
 
     #[serde(default)]
     pub insecure_skip_verify: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JwtConfig {
+    /// Secret key for HMAC algorithms (HS256, HS384, HS512)
+    #[serde(default)]
+    pub secret: Option<String>,
+
+    /// Path to public key file for RSA/EC algorithms (RS256, ES256, etc.)
+    #[serde(default)]
+    pub public_key: Option<String>,
+
+    /// Algorithm to use for validation (default: HS256)
+    #[serde(default = "default_jwt_algorithm")]
+    pub algorithm: String,
+
+    /// Issuer claim to validate (optional)
+    #[serde(default)]
+    pub issuer: Option<String>,
+
+    /// Audience claim to validate (optional)
+    #[serde(default)]
+    pub audience: Option<String>,
+
+    /// Header name to extract JWT from (default: Authorization)
+    #[serde(default = "default_jwt_header")]
+    pub header_name: String,
+
+    /// Prefix before token in header (default: Bearer)
+    #[serde(default = "default_jwt_prefix")]
+    pub header_prefix: String,
+
+    /// Query parameter name for JWT (optional, alternative to header)
+    #[serde(default)]
+    pub query_param: Option<String>,
+
+    /// Cookie name for JWT (optional, alternative to header)
+    #[serde(default)]
+    pub cookie_name: Option<String>,
+
+    /// Claims to forward as headers to backend (claim_name -> header_name)
+    #[serde(default)]
+    pub forward_claims: HashMap<String, String>,
+
+    /// Whether to remove the Authorization header after validation
+    #[serde(default)]
+    pub strip_authorization_header: bool,
+}
+
+fn default_jwt_algorithm() -> String {
+    "HS256".to_string()
+}
+
+fn default_jwt_header() -> String {
+    "Authorization".to_string()
+}
+
+fn default_jwt_prefix() -> String {
+    "Bearer ".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

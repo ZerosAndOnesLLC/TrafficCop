@@ -1,11 +1,13 @@
 mod least_conn;
 mod random;
 mod round_robin;
+mod sticky;
 mod weighted;
 
 pub use least_conn::LeastConnBalancer;
 pub use random::RandomBalancer;
 pub use round_robin::RoundRobinBalancer;
+pub use sticky::StickySessionManager;
 pub use weighted::WeightedBalancer;
 
 use crate::config::{LoadBalancerService, Server, Service};
