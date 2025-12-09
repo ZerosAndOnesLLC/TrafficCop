@@ -218,6 +218,9 @@ pub enum MiddlewareConfig {
     Compress(CompressConfig),
     Retry(RetryConfig),
     CircuitBreaker(CircuitBreakerConfig),
+    IpFilter(IpFilterConfig),
+    Cors(CorsConfig),
+    RedirectScheme(RedirectSchemeConfig),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -338,4 +341,95 @@ pub struct AcmeConfig {
 
 fn default_acme_storage() -> String {
     "acme.json".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IpFilterConfig {
+    /// IP addresses or CIDR ranges to allow (processed first)
+    #[serde(default)]
+    pub allow: Vec<String>,
+
+    /// IP addresses or CIDR ranges to deny
+    #[serde(default)]
+    pub deny: Vec<String>,
+
+    /// Default action when no rules match: "allow" or "deny"
+    #[serde(default = "default_ip_filter_default")]
+    pub default_action: String,
+}
+
+fn default_ip_filter_default() -> String {
+    "allow".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorsConfig {
+    /// Allowed origins (use "*" for all, or specific origins)
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+
+    /// Allowed HTTP methods
+    #[serde(default = "default_cors_methods")]
+    pub allowed_methods: Vec<String>,
+
+    /// Allowed headers
+    #[serde(default = "default_cors_headers")]
+    pub allowed_headers: Vec<String>,
+
+    /// Headers to expose to the browser
+    #[serde(default)]
+    pub exposed_headers: Vec<String>,
+
+    /// Allow credentials (cookies, authorization headers)
+    #[serde(default)]
+    pub allow_credentials: bool,
+
+    /// Max age for preflight cache in seconds
+    #[serde(default = "default_cors_max_age")]
+    pub max_age_seconds: u64,
+}
+
+fn default_cors_methods() -> Vec<String> {
+    vec![
+        "GET".to_string(),
+        "POST".to_string(),
+        "PUT".to_string(),
+        "DELETE".to_string(),
+        "OPTIONS".to_string(),
+    ]
+}
+
+fn default_cors_headers() -> Vec<String> {
+    vec![
+        "Content-Type".to_string(),
+        "Authorization".to_string(),
+        "X-Requested-With".to_string(),
+    ]
+}
+
+fn default_cors_max_age() -> u64 {
+    86400
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedirectSchemeConfig {
+    /// Target scheme ("https" or "http")
+    #[serde(default = "default_redirect_scheme")]
+    pub scheme: String,
+
+    /// Use permanent redirect (301) or temporary (302)
+    #[serde(default = "default_redirect_permanent")]
+    pub permanent: bool,
+
+    /// Port to redirect to (omit to use default port for scheme)
+    #[serde(default)]
+    pub port: Option<u16>,
+}
+
+fn default_redirect_scheme() -> String {
+    "https".to_string()
+}
+
+fn default_redirect_permanent() -> bool {
+    true
 }

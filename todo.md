@@ -1,6 +1,6 @@
 # TrafficCop - Remaining Features
 
-High-performance reverse proxy and load balancer. Current version: **v0.3.0**
+High-performance reverse proxy and load balancer. Current version: **v0.4.0**
 
 ---
 
@@ -26,6 +26,10 @@ High-performance reverse proxy and load balancer. Current version: **v0.3.0**
 - [x] Header manipulation
 - [x] Retry with exponential backoff
 - [x] Compression (gzip, brotli)
+- [x] IP allowlist/blocklist (CIDR)
+- [x] CORS middleware
+- [x] HTTPS redirect
+- [x] Basic authentication
 
 ### Health & Resilience
 - [x] HTTP health checks
@@ -39,12 +43,6 @@ High-performance reverse proxy and load balancer. Current version: **v0.3.0**
 ---
 
 ## 🔴 High Priority
-
-### Security
-- [ ] **IP allowlist/blocklist** - Filter by client IP
-- [ ] **CORS middleware** - Handle preflight and CORS headers
-- [ ] **HTTPS redirect** - Auto-redirect HTTP to HTTPS
-- [ ] **Basic authentication** - Username/password auth
 
 ### TLS
 - [ ] **Let's Encrypt ACME** - Automatic certificate provisioning

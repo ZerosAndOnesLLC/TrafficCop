@@ -15,7 +15,7 @@ A high-performance reverse proxy and load balancer written in Rust, designed to 
 - **Circuit Breaker**: Automatic backend isolation on failures with recovery
 - **TLS Termination**: Native TLS support via rustls (no OpenSSL dependency)
 - **Request Timeouts**: Configurable connect and request timeouts per service
-- **Middleware Pipeline**: Rate limiting, headers, retry with exponential backoff, compression
+- **Middleware Pipeline**: Rate limiting, headers, retry with exponential backoff, compression, IP filtering, CORS, HTTPS redirect, basic auth
 - **Compression**: gzip and brotli response compression
 - **Access Logging**: Structured JSON access logs
 - **Metrics**: Prometheus-compatible metrics endpoint
@@ -129,6 +129,43 @@ middlewares:
   compress:
     compress:
       min_response_body_bytes: 1024
+
+  ip-filter:
+    ip_filter:
+      allow:
+        - "10.0.0.0/8"
+        - "192.168.1.0/24"
+      deny:
+        - "192.168.1.100"
+      default_action: "deny"
+
+  cors:
+    cors:
+      allowed_origins:
+        - "https://example.com"
+        - "https://app.example.com"
+      allowed_methods:
+        - "GET"
+        - "POST"
+        - "PUT"
+        - "DELETE"
+      allowed_headers:
+        - "Content-Type"
+        - "Authorization"
+      allow_credentials: true
+      max_age_seconds: 86400
+
+  https-redirect:
+    redirect_scheme:
+      scheme: https
+      permanent: true
+
+  basic-auth:
+    basic_auth:
+      users:
+        - "admin:secret123"
+        - "user:password"
+      realm: "Restricted Area"
 ```
 
 ### Metrics
