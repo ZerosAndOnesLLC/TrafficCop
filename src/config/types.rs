@@ -15,6 +15,10 @@ pub struct Config {
     #[serde(default)]
     pub http: Option<HttpConfig>,
 
+    /// TCP routing configuration (dynamic config)
+    #[serde(default)]
+    pub tcp: Option<TcpConfig>,
+
     /// TLS configuration (dynamic config)
     #[serde(default)]
     pub tls: Option<TlsConfig>,
@@ -62,6 +66,278 @@ pub struct HttpConfig {
 
     #[serde(default)]
     pub servers_transports: HashMap<String, ServersTransport>,
+}
+
+// =============================================================================
+// TCP Configuration
+// =============================================================================
+
+/// TCP routing configuration (similar to Traefik's TCP config)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpConfig {
+    /// TCP routers
+    #[serde(default)]
+    pub routers: HashMap<String, TcpRouter>,
+
+    /// TCP services
+    #[serde(default)]
+    pub services: HashMap<String, TcpService>,
+
+    /// TCP middlewares
+    #[serde(default)]
+    pub middlewares: HashMap<String, TcpMiddlewareConfig>,
+
+    /// TCP servers transports
+    #[serde(default)]
+    pub servers_transports: HashMap<String, TcpServersTransport>,
+}
+
+/// TCP router configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpRouter {
+    /// Entry points to listen on
+    #[serde(default)]
+    pub entry_points: Vec<String>,
+
+    /// Routing rule (HostSNI for TLS, or catch-all `*`)
+    pub rule: String,
+
+    /// Service to route to
+    pub service: String,
+
+    /// Middlewares to apply
+    #[serde(default)]
+    pub middlewares: Vec<String>,
+
+    /// Priority for rule matching
+    #[serde(default)]
+    pub priority: i32,
+
+    /// TLS configuration (enables TLS passthrough or termination)
+    #[serde(default)]
+    pub tls: Option<TcpRouterTls>,
+}
+
+/// TCP router TLS configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpRouterTls {
+    /// Enable TLS passthrough (proxy encrypted traffic without decryption)
+    #[serde(default)]
+    pub passthrough: bool,
+
+    /// Certificate resolver for TLS termination
+    #[serde(default)]
+    pub cert_resolver: Option<String>,
+
+    /// Domains for certificate generation
+    #[serde(default)]
+    pub domains: Vec<TlsDomain>,
+
+    /// TLS options reference
+    #[serde(default)]
+    pub options: Option<String>,
+}
+
+/// TCP service configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpService {
+    /// Load balancer service
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load_balancer: Option<TcpLoadBalancer>,
+
+    /// Weighted service (traffic splitting)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weighted: Option<TcpWeightedService>,
+}
+
+impl TcpService {
+    pub fn service_type(&self) -> &'static str {
+        if self.load_balancer.is_some() {
+            "loadBalancer"
+        } else if self.weighted.is_some() {
+            "weighted"
+        } else {
+            "unknown"
+        }
+    }
+}
+
+/// TCP load balancer configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpLoadBalancer {
+    /// Backend servers
+    pub servers: Vec<TcpServer>,
+
+    /// Health check configuration
+    #[serde(default)]
+    pub health_check: Option<TcpHealthCheck>,
+
+    /// Servers transport reference
+    #[serde(default)]
+    pub servers_transport: Option<String>,
+
+    /// Proxy protocol version (1 or 2) to send to backends
+    #[serde(default)]
+    pub proxy_protocol: Option<u8>,
+
+    /// Termination delay for graceful shutdown
+    #[serde(default)]
+    pub termination_delay: Option<Duration>,
+}
+
+/// TCP backend server
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpServer {
+    /// Server address (host:port)
+    pub address: String,
+
+    /// Server weight for load balancing
+    #[serde(default = "default_weight")]
+    pub weight: u32,
+
+    /// Enable TLS to backend
+    #[serde(default)]
+    pub tls: bool,
+}
+
+/// TCP health check configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpHealthCheck {
+    /// Health check interval
+    #[serde(default = "default_tcp_health_interval")]
+    pub interval: Duration,
+
+    /// Health check timeout
+    #[serde(default = "default_tcp_health_timeout")]
+    pub timeout: Duration,
+}
+
+fn default_tcp_health_interval() -> Duration {
+    Duration::from_secs(10)
+}
+
+fn default_tcp_health_timeout() -> Duration {
+    Duration::from_secs(5)
+}
+
+/// TCP weighted service for traffic splitting
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpWeightedService {
+    /// Services with weights
+    pub services: Vec<TcpWeightedServiceRef>,
+}
+
+/// Reference to a TCP service with weight
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpWeightedServiceRef {
+    /// Service name
+    pub name: String,
+
+    /// Weight
+    #[serde(default = "default_weight")]
+    pub weight: u32,
+}
+
+/// TCP middleware configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpMiddlewareConfig {
+    /// IP allowlist middleware
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip_allow_list: Option<TcpIpAllowList>,
+
+    /// IP denylist middleware
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip_deny_list: Option<TcpIpDenyList>,
+
+    /// In-flight connection limit
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_flight_conn: Option<TcpInFlightConn>,
+}
+
+impl TcpMiddlewareConfig {
+    pub fn middleware_type(&self) -> &'static str {
+        if self.ip_allow_list.is_some() {
+            "ipAllowList"
+        } else if self.ip_deny_list.is_some() {
+            "ipDenyList"
+        } else if self.in_flight_conn.is_some() {
+            "inFlightConn"
+        } else {
+            "unknown"
+        }
+    }
+}
+
+/// TCP IP allowlist middleware
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpIpAllowList {
+    /// Allowed IP ranges (CIDR notation)
+    pub source_range: Vec<String>,
+}
+
+/// TCP IP denylist middleware
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpIpDenyList {
+    /// Denied IP ranges (CIDR notation)
+    pub source_range: Vec<String>,
+}
+
+/// TCP in-flight connection limit middleware
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpInFlightConn {
+    /// Maximum number of concurrent connections
+    pub amount: i64,
+}
+
+/// TCP servers transport configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpServersTransport {
+    /// TLS configuration for backend connections
+    #[serde(default)]
+    pub tls: Option<TcpTransportTls>,
+
+    /// Dial timeout
+    #[serde(default = "default_dial_timeout")]
+    pub dial_timeout: Duration,
+
+    /// Keep-alive settings
+    #[serde(default)]
+    pub dial_keep_alive: Option<Duration>,
+}
+
+/// TLS configuration for TCP backend connections
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpTransportTls {
+    /// Server name for TLS verification
+    #[serde(default)]
+    pub server_name: Option<String>,
+
+    /// Skip TLS verification (insecure)
+    #[serde(default)]
+    pub insecure_skip_verify: bool,
+
+    /// Root CA certificates
+    #[serde(default)]
+    pub root_cas: Vec<String>,
+
+    /// Client certificates
+    #[serde(default)]
+    pub certificates: Vec<TlsCertificate>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

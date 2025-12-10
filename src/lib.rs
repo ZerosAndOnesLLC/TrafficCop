@@ -11,6 +11,7 @@ pub mod router;
 pub mod server;
 pub mod service;
 pub mod store;
+pub mod tcp;
 pub mod telemetry;
 pub mod tls;
 

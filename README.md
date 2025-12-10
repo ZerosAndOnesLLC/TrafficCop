@@ -28,6 +28,12 @@ A high-performance reverse proxy and load balancer written in Rust with **Traefi
 - **Node Draining**: Graceful node removal via admin API
 - **Remote Configuration**: Fetch config from HTTP/S3/Consul endpoints
 
+### Protocol Support (v0.11.0)
+- **gRPC Proxying**: Native gRPC support with trailer handling and gRPC-specific error responses
+- **gRPC-Web**: Browser-to-gRPC translation middleware with base64 encoding support
+- **TCP Proxying**: Raw TCP load balancing with SNI-based routing
+- **TLS Passthrough**: Forward encrypted traffic without termination
+
 ### Security & TLS
 - **TLS Termination**: Native TLS support via rustls (no OpenSSL dependency)
 - **Let's Encrypt ACME**: Automatic certificate provisioning and renewal
@@ -318,6 +324,117 @@ tls:
       sniStrict: true
 ```
 
+### TCP Configuration (v0.11.0)
+
+TCP proxying supports raw TCP connections with SNI-based routing for TLS passthrough:
+
+```yaml
+# Entry point for TCP (e.g., database proxy)
+entryPoints:
+  mysql:
+    address: ":3306"
+  postgres:
+    address: ":5432"
+
+# TCP routing configuration
+tcp:
+  routers:
+    # MySQL proxy with TLS passthrough
+    mysql-router:
+      entryPoints:
+        - mysql
+      rule: "HostSNI(`mysql.example.com`)"
+      service: mysql-cluster
+      tls:
+        passthrough: true
+
+    # PostgreSQL proxy (no TLS)
+    postgres-router:
+      entryPoints:
+        - postgres
+      rule: "*"  # Catch-all
+      service: postgres-cluster
+
+    # Route by client IP
+    internal-db:
+      entryPoints:
+        - postgres
+      rule: "ClientIP(`10.0.0.0/8`)"
+      service: internal-postgres
+
+  services:
+    mysql-cluster:
+      loadBalancer:
+        servers:
+          - address: "10.0.0.1:3306"
+          - address: "10.0.0.2:3306"
+        healthCheck:
+          interval: "10s"
+          timeout: "5s"
+
+    postgres-cluster:
+      loadBalancer:
+        servers:
+          - address: "10.0.0.3:5432"
+            weight: 2
+          - address: "10.0.0.4:5432"
+            weight: 1
+
+  middlewares:
+    # IP filtering for TCP
+    trusted-sources:
+      ipAllowList:
+        sourceRange:
+          - "10.0.0.0/8"
+          - "192.168.0.0/16"
+
+    # Connection limit
+    conn-limit:
+      inFlightConn:
+        amount: 100
+```
+
+#### TCP Routing Rules
+
+| Rule | Description | Example |
+|------|-------------|---------|
+| `*` | Catch-all | `rule: "*"` |
+| `HostSNI` | TLS SNI hostname | `HostSNI(\`db.example.com\`)` |
+| `ClientIP` | Client IP/CIDR | `ClientIP(\`10.0.0.0/8\`)` |
+
+### gRPC Configuration (v0.11.0)
+
+gRPC traffic works through HTTP routers with automatic detection:
+
+```yaml
+http:
+  routers:
+    grpc-router:
+      entryPoints:
+        - websecure
+      rule: "Host(`grpc.example.com`)"
+      service: grpc-service
+      middlewares:
+        - grpc-web  # For browser clients
+      tls:
+        certResolver: letsencrypt
+
+  services:
+    grpc-service:
+      loadBalancer:
+        servers:
+          - url: "h2c://10.0.0.1:50051"  # gRPC over HTTP/2 cleartext
+          - url: "h2c://10.0.0.2:50051"
+
+  middlewares:
+    # gRPC-Web for browser clients
+    grpc-web:
+      grpcWeb:
+        allowOrigins:
+          - "https://app.example.com"
+          - "https://*.example.com"
+```
+
 ### ACME (Let's Encrypt)
 
 ```yaml
@@ -450,34 +567,39 @@ When cluster mode is enabled:
 ## Architecture
 
 ```
-┌─────────────────────────────────────┐
-│         Entry Points                │
-│   (HTTP/HTTPS Listeners)            │
-└──────────────┬──────────────────────┘
-               │
-┌──────────────▼──────────────────────┐
-│          Router Layer               │
-│  (Host, Path, Header matching)      │
-└──────────────┬──────────────────────┘
-               │
-┌──────────────▼──────────────────────┐
-│      Middleware Pipeline            │
-│ (Auth, RateLimit, Headers, etc.)    │
-└──────────────┬──────────────────────┘
-               │
-┌──────────────▼──────────────────────┐
-│         Load Balancer               │
-│(Round-robin, Weighted, Sticky)      │
-└──────────────┬──────────────────────┘
-               │
-┌──────────────▼──────────────────────┐
-│       Connection Pool               │
-│   (Backend connection reuse)        │
-└──────────────┬──────────────────────┘
-               │
-┌──────────────▼──────────────────────┐
-│       Backend Services              │
-└─────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                    Entry Points                          │
+│         (HTTP/HTTPS/WebSocket/TCP/gRPC)                  │
+└────────────────────────┬────────────────────────────────┘
+                         │
+         ┌───────────────┴───────────────┐
+         │                               │
+┌────────▼────────┐           ┌──────────▼──────────┐
+│   HTTP Router   │           │    TCP Router       │
+│ (Host/Path/HDR) │           │  (SNI/IP matching)  │
+└────────┬────────┘           └──────────┬──────────┘
+         │                               │
+┌────────▼────────────────┐   ┌──────────▼──────────┐
+│  Middleware Pipeline    │   │  TCP Middleware     │
+│(Auth,Rate,CORS,Compress)│   │ (IP Filter, Limit)  │
+└────────┬────────────────┘   └──────────┬──────────┘
+         │                               │
+┌────────▼────────────────┐   ┌──────────▼──────────┐
+│    Load Balancer        │   │   TCP Load Balancer │
+│(RR,Weighted,LeastConn)  │   │    (Round-Robin)    │
+└────────┬────────────────┘   └──────────┬──────────┘
+         │                               │
+┌────────▼────────────────┐   ┌──────────▼──────────┐
+│   Connection Pool       │   │ TCP Proxy (Bidir)   │
+│(Keep-alive, HTTP/2 mux) │   │  (TLS Passthrough)  │
+└────────┬────────────────┘   └──────────┬──────────┘
+         │                               │
+         └───────────────┬───────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────┐
+│                  Backend Services                        │
+│           (HTTP/gRPC/TCP/Database/Custom)                │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ## Performance
@@ -548,9 +670,18 @@ traffic_management/
 │   ├── config/          # Configuration parsing (Traefik-compatible)
 │   ├── server/          # HTTP listeners
 │   ├── router/          # Rule matching engine
-│   ├── proxy/           # Request proxying
+│   ├── proxy/           # Request proxying (HTTP/gRPC)
+│   │   ├── handler.rs   # HTTP proxy handler
+│   │   ├── grpc.rs      # gRPC support and error handling
+│   │   └── websocket.rs # WebSocket upgrade handling
+│   ├── tcp/             # TCP proxying (v0.11.0)
+│   │   ├── proxy.rs     # TCP bidirectional proxy
+│   │   ├── router.rs    # SNI/IP-based routing
+│   │   └── service.rs   # TCP service management
 │   ├── balancer/        # Load balancing
 │   ├── middleware/      # Middleware pipeline
+│   │   └── builtin/     # Built-in middlewares
+│   │       └── grpc_web.rs  # gRPC-Web translation
 │   ├── health/          # Health checking (local + distributed)
 │   ├── pool/            # Connection pooling
 │   ├── tls/             # TLS/ACME

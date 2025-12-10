@@ -2,7 +2,7 @@ use crate::router::Router;
 use crate::service::ServiceManager;
 use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
-use hyper::header::{HeaderName, HeaderValue, CONNECTION, HOST, TRANSFER_ENCODING, UPGRADE};
+use hyper::header::{HeaderName, HeaderValue, CONNECTION, CONTENT_TYPE, HOST, TRANSFER_ENCODING, UPGRADE};
 use hyper::{body::Incoming, Request, Response, StatusCode, Uri};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
@@ -11,6 +11,8 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use tracing::{debug, error, warn};
+
+use super::grpc;
 
 fn hop_by_hop_headers() -> &'static [HeaderName] {
     static HEADERS: &[HeaderName] = &[
@@ -53,6 +55,9 @@ impl ProxyHandler {
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
         let start = Instant::now();
 
+        // Detect if this is a gRPC request for proper error responses
+        let is_grpc = grpc::is_grpc_request(&req) || grpc::is_grpc_web_request(&req);
+
         let host = req
             .headers()
             .get(HOST)
@@ -65,8 +70,8 @@ impl ProxyHandler {
         let method = req.method().clone();
 
         debug!(
-            "Request: {} {} from {} (host: {:?})",
-            method, path, remote_addr, host
+            "Request: {} {} from {} (host: {:?}, grpc: {})",
+            method, path, remote_addr, host, is_grpc
         );
 
         // Find matching route
@@ -85,7 +90,11 @@ impl ProxyHandler {
                     host.as_deref().unwrap_or("-"),
                     path
                 );
-                return Ok(Self::error_response(StatusCode::NOT_FOUND, "Not Found"));
+                return Ok(Self::error_response_maybe_grpc(
+                    StatusCode::NOT_FOUND,
+                    "Not Found",
+                    is_grpc,
+                ));
             }
         };
 
@@ -102,9 +111,10 @@ impl ProxyHandler {
             Some(s) => s,
             None => {
                 error!("Service '{}' not found", service_name);
-                return Ok(Self::error_response(
+                return Ok(Self::error_response_maybe_grpc(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "Service Unavailable",
+                    is_grpc,
                 ));
             }
         };
@@ -114,17 +124,19 @@ impl ProxyHandler {
                 Some(s) => s.url.clone(),
                 None => {
                     error!("No healthy backends for service '{}'", service_name);
-                    return Ok(Self::error_response(
+                    return Ok(Self::error_response_maybe_grpc(
                         StatusCode::SERVICE_UNAVAILABLE,
                         "No Healthy Backends",
+                        is_grpc,
                     ));
                 }
             },
             None => {
                 error!("Service '{}' has no load balancer configured", service_name);
-                return Ok(Self::error_response(
+                return Ok(Self::error_response_maybe_grpc(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "Service Not Configured",
+                    is_grpc,
                 ));
             }
         };
@@ -144,30 +156,37 @@ impl ProxyHandler {
             Ok(uri) => uri,
             Err(e) => {
                 error!("Failed to build backend URI: {}", e);
-                return Ok(Self::error_response(
+                return Ok(Self::error_response_maybe_grpc(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "Internal Server Error",
+                    is_grpc,
                 ));
             }
         };
 
         // Create the proxied request
         let proxied_req =
-            match Self::build_proxied_request(req, backend_uri, remote_addr, host.as_deref(), is_tls)
+            match Self::build_proxied_request(req, backend_uri, remote_addr, host.as_deref(), is_tls, is_grpc)
             {
                 Ok(r) => r,
                 Err(e) => {
                     error!("Failed to build proxied request: {}", e);
-                    return Ok(Self::error_response(
+                    return Ok(Self::error_response_maybe_grpc(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "Internal Server Error",
+                        is_grpc,
                     ));
                 }
             };
 
         // Forward the request to the backend with timeout
         // Default request timeout of 30 seconds (can be configured via serversTransport)
-        let request_timeout = Duration::from_secs(30);
+        // For gRPC, use longer timeout as streaming calls may be long-lived
+        let request_timeout = if is_grpc {
+            Duration::from_secs(300) // 5 minutes for gRPC
+        } else {
+            Duration::from_secs(30)
+        };
         let backend_future = self.client.request(proxied_req);
 
         match timeout(request_timeout, backend_future).await {
@@ -182,9 +201,11 @@ impl ProxyHandler {
                 let (parts, body) = response.into_parts();
                 let mut response = Response::from_parts(parts, body.map_err(|e| e.into()).boxed());
 
-                // Remove hop-by-hop headers from response
-                for header in hop_by_hop_headers() {
-                    response.headers_mut().remove(header);
+                // Remove hop-by-hop headers from response (but not for gRPC trailers)
+                if !is_grpc {
+                    for header in hop_by_hop_headers() {
+                        response.headers_mut().remove(header);
+                    }
                 }
 
                 Ok(response)
@@ -195,7 +216,11 @@ impl ProxyHandler {
                     "Backend request failed in {:?}: {} -> {}",
                     elapsed, backend_url, e
                 );
-                Ok(Self::error_response(StatusCode::BAD_GATEWAY, "Bad Gateway"))
+                Ok(Self::error_response_maybe_grpc(
+                    StatusCode::BAD_GATEWAY,
+                    "Bad Gateway",
+                    is_grpc,
+                ))
             }
             Err(_) => {
                 let elapsed = start.elapsed();
@@ -203,7 +228,11 @@ impl ProxyHandler {
                     "Request timeout after {:?} (limit: {:?}): {}",
                     elapsed, request_timeout, backend_url
                 );
-                Ok(Self::error_response(StatusCode::GATEWAY_TIMEOUT, "Gateway Timeout"))
+                Ok(Self::error_response_maybe_grpc(
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "Gateway Timeout",
+                    is_grpc,
+                ))
             }
         }
     }
@@ -237,21 +266,39 @@ impl ProxyHandler {
         remote_addr: SocketAddr,
         original_host: Option<&str>,
         is_tls: bool,
+        is_grpc: bool,
     ) -> Result<Request<BoxBody<Bytes, hyper::Error>>, String> {
         let (mut parts, body) = req.into_parts();
 
         parts.uri = backend_uri;
 
-        // Remove hop-by-hop headers
-        for header in hop_by_hop_headers() {
-            parts.headers.remove(header);
+        // For gRPC, we need to be more careful about which headers we remove
+        if !is_grpc {
+            // Remove hop-by-hop headers
+            for header in hop_by_hop_headers() {
+                parts.headers.remove(header);
+            }
+            // Also remove these which aren't in the static list
+            parts.headers.remove("keep-alive");
+            parts.headers.remove("proxy-authenticate");
+            parts.headers.remove("proxy-authorization");
+            parts.headers.remove("te");
+            parts.headers.remove("trailers");
+        } else {
+            // For gRPC, keep TE: trailers as it's required for trailer handling
+            // Remove other hop-by-hop headers except trailers-related
+            parts.headers.remove("keep-alive");
+            parts.headers.remove("proxy-authenticate");
+            parts.headers.remove("proxy-authorization");
+
+            // Ensure TE: trailers is set (required for gRPC over HTTP/2)
+            if !parts.headers.contains_key("te") {
+                parts.headers.insert(
+                    HeaderName::from_static("te"),
+                    HeaderValue::from_static("trailers"),
+                );
+            }
         }
-        // Also remove these which aren't in the static list
-        parts.headers.remove("keep-alive");
-        parts.headers.remove("proxy-authenticate");
-        parts.headers.remove("proxy-authorization");
-        parts.headers.remove("te");
-        parts.headers.remove("trailers");
 
         // Add/append X-Forwarded-For
         let xff = match parts.headers.get("x-forwarded-for") {
@@ -294,6 +341,20 @@ impl ProxyHandler {
         Ok(Request::from_parts(parts, boxed_body))
     }
 
+    /// Return appropriate error response based on whether this is a gRPC request
+    #[inline]
+    fn error_response_maybe_grpc(
+        status: StatusCode,
+        message: &'static str,
+        is_grpc: bool,
+    ) -> Response<BoxBody<Bytes, hyper::Error>> {
+        if is_grpc {
+            grpc::grpc_gateway_error(status, message)
+        } else {
+            Self::error_response(status, message)
+        }
+    }
+
     #[inline]
     fn error_response(
         status: StatusCode,
@@ -301,7 +362,7 @@ impl ProxyHandler {
     ) -> Response<BoxBody<Bytes, hyper::Error>> {
         Response::builder()
             .status(status)
-            .header("content-type", "text/plain; charset=utf-8")
+            .header(CONTENT_TYPE, "text/plain; charset=utf-8")
             .body(Self::full_body(message))
             .unwrap()
     }
