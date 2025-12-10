@@ -87,6 +87,41 @@ impl Config {
         self.tcp.as_ref().map(|t| !t.routers.is_empty()).unwrap_or(false)
     }
 
+    /// Get UDP routers
+    pub fn udp_routers(&self) -> &std::collections::HashMap<String, UdpRouter> {
+        static EMPTY: std::sync::OnceLock<std::collections::HashMap<String, UdpRouter>> =
+            std::sync::OnceLock::new();
+        self.udp
+            .as_ref()
+            .map(|u| &u.routers)
+            .unwrap_or_else(|| EMPTY.get_or_init(std::collections::HashMap::new))
+    }
+
+    /// Get UDP services
+    pub fn udp_services(&self) -> &std::collections::HashMap<String, UdpService> {
+        static EMPTY: std::sync::OnceLock<std::collections::HashMap<String, UdpService>> =
+            std::sync::OnceLock::new();
+        self.udp
+            .as_ref()
+            .map(|u| &u.services)
+            .unwrap_or_else(|| EMPTY.get_or_init(std::collections::HashMap::new))
+    }
+
+    /// Get UDP middlewares
+    pub fn udp_middlewares(&self) -> &std::collections::HashMap<String, UdpMiddlewareConfig> {
+        static EMPTY: std::sync::OnceLock<std::collections::HashMap<String, UdpMiddlewareConfig>> =
+            std::sync::OnceLock::new();
+        self.udp
+            .as_ref()
+            .map(|u| &u.middlewares)
+            .unwrap_or_else(|| EMPTY.get_or_init(std::collections::HashMap::new))
+    }
+
+    /// Check if this config has any UDP routers
+    pub fn has_udp(&self) -> bool {
+        self.udp.as_ref().map(|u| !u.routers.is_empty()).unwrap_or(false)
+    }
+
     pub fn validate(&self) -> Result<()> {
         // Validate entrypoints
         if self.entry_points.is_empty() {
@@ -194,6 +229,55 @@ impl Config {
                 if !self.entry_points.contains_key(ep_name) {
                     anyhow::bail!(
                         "TCP router '{}' references non-existent entryPoint '{}'",
+                        name,
+                        ep_name
+                    );
+                }
+            }
+        }
+
+        // Validate UDP services
+        for (name, service) in self.udp_services() {
+            if let Some(lb) = &service.load_balancer {
+                if lb.servers.is_empty() {
+                    anyhow::bail!("UDP service '{}' must have at least one server", name);
+                }
+            } else if let Some(w) = &service.weighted {
+                if w.services.is_empty() {
+                    anyhow::bail!("UDP weighted service '{}' must reference at least one service", name);
+                }
+            } else {
+                anyhow::bail!("UDP service '{}' must have loadBalancer or weighted configured", name);
+            }
+        }
+
+        // Validate UDP routers
+        for (name, router) in self.udp_routers() {
+            if !self.udp_services().contains_key(&router.service) {
+                anyhow::bail!(
+                    "UDP router '{}' references non-existent service '{}'",
+                    name,
+                    router.service
+                );
+            }
+
+            // Validate UDP middleware references
+            for mw_name in &router.middlewares {
+                let mw_name_clean = mw_name.split('@').next().unwrap_or(mw_name);
+                if !self.udp_middlewares().contains_key(mw_name_clean) && !self.udp_middlewares().contains_key(mw_name) {
+                    anyhow::bail!(
+                        "UDP router '{}' references non-existent middleware '{}'",
+                        name,
+                        mw_name
+                    );
+                }
+            }
+
+            // Validate entrypoint references
+            for ep_name in &router.entry_points {
+                if !self.entry_points.contains_key(ep_name) {
+                    anyhow::bail!(
+                        "UDP router '{}' references non-existent entryPoint '{}'",
                         name,
                         ep_name
                     );

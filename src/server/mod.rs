@@ -1,12 +1,15 @@
 mod listener;
+mod udp_listener;
 
 pub use listener::Listener;
+pub use udp_listener::UdpListener;
 
 use crate::config::{watch_config_async, Config};
 use crate::proxy::ProxyHandler;
 use crate::router::Router;
 use crate::service::ServiceManager;
 use crate::tls::{AcmeManager, CertificateResolver, PendingChallenge};
+use crate::udp::{UdpRouter, UdpServiceManager};
 use anyhow::Result;
 use arc_swap::ArcSwap;
 use std::collections::HashMap;
@@ -15,7 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
 
 /// Tracks active connections for graceful shutdown
@@ -194,6 +197,7 @@ impl Server {
 
         let config = self.config.load();
         let mut handles = Vec::new();
+        let mut udp_shutdown_txs: Vec<mpsc::Sender<()>> = Vec::new();
 
         // Collect entrypoints to avoid lifetime issues
         let entrypoints: Vec<_> = config
@@ -202,7 +206,8 @@ impl Server {
             .map(|(name, ep)| (name.clone(), ep.clone()))
             .collect();
 
-        for (name, entrypoint) in entrypoints {
+        // Start HTTP/TCP listeners for entrypoints
+        for (name, entrypoint) in entrypoints.clone() {
             let listener = Listener::new(
                 name.clone(),
                 entrypoint,
@@ -218,6 +223,36 @@ impl Server {
             });
 
             handles.push(handle);
+        }
+
+        // Start UDP listeners if UDP config is present
+        if config.has_udp() {
+            let udp_router = Arc::new(UdpRouter::from_config(&config));
+            let udp_services = Arc::new(UdpServiceManager::new(&config));
+
+            // Find entrypoints that have UDP routers
+            for (name, entrypoint) in entrypoints {
+                if udp_router.has_routes_for(&name) {
+                    let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+                    udp_shutdown_txs.push(shutdown_tx);
+
+                    let udp_listener = UdpListener::new(
+                        name.clone(),
+                        entrypoint,
+                        Arc::clone(&udp_router),
+                        Arc::clone(&udp_services),
+                    );
+
+                    let listener_name = name.clone();
+                    let handle = tokio::spawn(async move {
+                        if let Err(e) = udp_listener.serve(shutdown_rx).await {
+                            error!("UDP Listener '{}' error: {}", listener_name, e);
+                        }
+                    });
+
+                    handles.push(handle);
+                }
+            }
         }
 
         // Start config watcher
@@ -254,6 +289,11 @@ impl Server {
 
         // Start draining - reject new connections
         self.state.connections.start_drain();
+
+        // Signal UDP listeners to shutdown
+        for tx in udp_shutdown_txs {
+            let _ = tx.send(()).await;
+        }
 
         // Wait for existing connections to complete (30 second timeout)
         let drain_timeout = Duration::from_secs(30);

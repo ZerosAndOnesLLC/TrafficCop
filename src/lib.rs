@@ -14,6 +14,7 @@ pub mod store;
 pub mod tcp;
 pub mod telemetry;
 pub mod tls;
+pub mod udp;
 
 pub use config::Config;
 pub use store::{Store, StoreConfig};

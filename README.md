@@ -28,11 +28,12 @@ A high-performance reverse proxy and load balancer written in Rust with **Traefi
 - **Node Draining**: Graceful node removal via admin API
 - **Remote Configuration**: Fetch config from HTTP/S3/Consul endpoints
 
-### Protocol Support (v0.11.0)
+### Protocol Support (v0.11.0+)
 - **gRPC Proxying**: Native gRPC support with trailer handling and gRPC-specific error responses
 - **gRPC-Web**: Browser-to-gRPC translation middleware with base64 encoding support
 - **TCP Proxying**: Raw TCP load balancing with SNI-based routing
 - **TLS Passthrough**: Forward encrypted traffic without termination
+- **UDP Proxying** (v0.12.0): Datagram proxying with session tracking and IP-based routing
 
 ### Security & TLS
 - **TLS Termination**: Native TLS support via rustls (no OpenSSL dependency)
@@ -402,6 +403,98 @@ tcp:
 | `HostSNI` | TLS SNI hostname | `HostSNI(\`db.example.com\`)` |
 | `ClientIP` | Client IP/CIDR | `ClientIP(\`10.0.0.0/8\`)` |
 
+### UDP Configuration (v0.12.0)
+
+UDP proxying supports datagram-based protocols like DNS, QUIC, or custom UDP services:
+
+```yaml
+# Entry points for UDP
+entryPoints:
+  dns:
+    address: ":53"
+  syslog:
+    address: ":514"
+
+# UDP routing configuration
+udp:
+  routers:
+    # DNS proxy (catch-all)
+    dns-router:
+      entryPoints:
+        - dns
+      rule: "*"
+      service: dns-cluster
+
+    # Route by client IP for internal services
+    internal-syslog:
+      entryPoints:
+        - syslog
+      rule: "ClientIP(`10.0.0.0/8`)"
+      service: internal-syslog
+      priority: 100
+
+    # Catch-all syslog
+    syslog-router:
+      entryPoints:
+        - syslog
+      rule: "*"
+      service: syslog-cluster
+
+  services:
+    dns-cluster:
+      loadBalancer:
+        servers:
+          - address: "10.0.0.1:53"
+          - address: "10.0.0.2:53"
+        healthCheck:
+          interval: "30s"
+          timeout: "5s"
+          payload: "\x00\x00\x01\x00\x00\x01"  # DNS query probe (hex)
+
+    syslog-cluster:
+      loadBalancer:
+        servers:
+          - address: "10.0.0.3:514"
+            weight: 2
+          - address: "10.0.0.4:514"
+            weight: 1
+
+    internal-syslog:
+      loadBalancer:
+        servers:
+          - address: "192.168.1.10:514"
+
+  middlewares:
+    # IP filtering for UDP
+    trusted-sources:
+      ipAllowList:
+        sourceRange:
+          - "10.0.0.0/8"
+
+    # Rate limiting per source IP
+    rate-limit:
+      rateLimit:
+        average: 1000  # packets per period
+        burst: 100
+        period: "1s"
+```
+
+#### UDP Features
+
+- **Session Tracking**: Client source IP/port is tracked to route responses back correctly
+- **Consistent Hashing**: Clients are routed to the same backend based on source IP for session affinity
+- **Session Timeout**: Configurable timeout (default 60s) for inactive sessions
+- **Load Balancing**: Round-robin with health-aware routing
+
+#### UDP Routing Rules
+
+| Rule | Description | Example |
+|------|-------------|---------|
+| `*` | Catch-all | `rule: "*"` |
+| `ClientIP` | Client IP/CIDR | `ClientIP(\`10.0.0.0/8\`)` |
+
+Note: UDP does not support SNI-based routing since there is no TLS handshake for connection-less protocols.
+
 ### gRPC Configuration (v0.11.0)
 
 gRPC traffic works through HTTP routers with automatic detection:
@@ -567,39 +660,39 @@ When cluster mode is enabled:
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Entry Points                          │
-│         (HTTP/HTTPS/WebSocket/TCP/gRPC)                  │
-└────────────────────────┬────────────────────────────────┘
-                         │
-         ┌───────────────┴───────────────┐
-         │                               │
-┌────────▼────────┐           ┌──────────▼──────────┐
-│   HTTP Router   │           │    TCP Router       │
-│ (Host/Path/HDR) │           │  (SNI/IP matching)  │
-└────────┬────────┘           └──────────┬──────────┘
-         │                               │
-┌────────▼────────────────┐   ┌──────────▼──────────┐
-│  Middleware Pipeline    │   │  TCP Middleware     │
-│(Auth,Rate,CORS,Compress)│   │ (IP Filter, Limit)  │
-└────────┬────────────────┘   └──────────┬──────────┘
-         │                               │
-┌────────▼────────────────┐   ┌──────────▼──────────┐
-│    Load Balancer        │   │   TCP Load Balancer │
-│(RR,Weighted,LeastConn)  │   │    (Round-Robin)    │
-└────────┬────────────────┘   └──────────┬──────────┘
-         │                               │
-┌────────▼────────────────┐   ┌──────────▼──────────┐
-│   Connection Pool       │   │ TCP Proxy (Bidir)   │
-│(Keep-alive, HTTP/2 mux) │   │  (TLS Passthrough)  │
-└────────┬────────────────┘   └──────────┬──────────┘
-         │                               │
-         └───────────────┬───────────────┘
-                         │
-┌────────────────────────▼────────────────────────────────┐
-│                  Backend Services                        │
-│           (HTTP/gRPC/TCP/Database/Custom)                │
-└─────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                       Entry Points                              │
+│            (HTTP/HTTPS/WebSocket/TCP/gRPC/UDP)                  │
+└──────────────────────────┬─────────────────────────────────────┘
+                           │
+       ┌───────────────────┼───────────────────┐
+       │                   │                   │
+┌──────▼──────┐    ┌───────▼───────┐   ┌───────▼───────┐
+│ HTTP Router │    │  TCP Router   │   │  UDP Router   │
+│(Host/Path)  │    │ (SNI/IP)      │   │ (IP only)     │
+└──────┬──────┘    └───────┬───────┘   └───────┬───────┘
+       │                   │                   │
+┌──────▼──────────┐ ┌──────▼──────────┐ ┌──────▼──────────┐
+│   Middleware    │ │ TCP Middleware  │ │ UDP Middleware  │
+│(Auth,Rate,CORS) │ │(IP Filter,Conn) │ │(IP Filter,Rate) │
+└──────┬──────────┘ └──────┬──────────┘ └──────┬──────────┘
+       │                   │                   │
+┌──────▼──────────┐ ┌──────▼──────────┐ ┌──────▼──────────┐
+│ Load Balancer   │ │TCP Load Balancer│ │UDP Load Balancer│
+│(RR,Weighted,LC) │ │  (Round-Robin)  │ │  (Hash-based)   │
+└──────┬──────────┘ └──────┬──────────┘ └──────┬──────────┘
+       │                   │                   │
+┌──────▼──────────┐ ┌──────▼──────────┐ ┌──────▼──────────┐
+│Connection Pool  │ │TCP Proxy (Bidir)│ │UDP Proxy        │
+│(Keep-alive,H2)  │ │(TLS Passthrough)│ │(Session Track)  │
+└──────┬──────────┘ └──────┬──────────┘ └──────┬──────────┘
+       │                   │                   │
+       └───────────────────┼───────────────────┘
+                           │
+┌──────────────────────────▼─────────────────────────────────────┐
+│                     Backend Services                            │
+│            (HTTP/gRPC/TCP/UDP/Database/Custom)                  │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ## Performance
@@ -668,7 +761,9 @@ traffic_management/
 │   ├── main.rs          # CLI entry point
 │   ├── lib.rs           # Library entry point
 │   ├── config/          # Configuration parsing (Traefik-compatible)
-│   ├── server/          # HTTP listeners
+│   ├── server/          # HTTP/TCP/UDP listeners
+│   │   ├── listener.rs  # HTTP/TLS listener
+│   │   └── udp_listener.rs  # UDP listener (v0.12.0)
 │   ├── router/          # Rule matching engine
 │   ├── proxy/           # Request proxying (HTTP/gRPC)
 │   │   ├── handler.rs   # HTTP proxy handler
@@ -678,6 +773,10 @@ traffic_management/
 │   │   ├── proxy.rs     # TCP bidirectional proxy
 │   │   ├── router.rs    # SNI/IP-based routing
 │   │   └── service.rs   # TCP service management
+│   ├── udp/             # UDP proxying (v0.12.0)
+│   │   ├── proxy.rs     # UDP datagram proxy with session tracking
+│   │   ├── router.rs    # IP-based routing
+│   │   └── service.rs   # UDP service management
 │   ├── balancer/        # Load balancing
 │   ├── middleware/      # Middleware pipeline
 │   │   └── builtin/     # Built-in middlewares

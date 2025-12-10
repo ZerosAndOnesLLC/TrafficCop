@@ -19,6 +19,10 @@ pub struct Config {
     #[serde(default)]
     pub tcp: Option<TcpConfig>,
 
+    /// UDP routing configuration (dynamic config)
+    #[serde(default)]
+    pub udp: Option<UdpConfig>,
+
     /// TLS configuration (dynamic config)
     #[serde(default)]
     pub tls: Option<TlsConfig>,
@@ -338,6 +342,212 @@ pub struct TcpTransportTls {
     /// Client certificates
     #[serde(default)]
     pub certificates: Vec<TlsCertificate>,
+}
+
+// =============================================================================
+// UDP Configuration
+// =============================================================================
+
+/// UDP routing configuration (similar to TCP config)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UdpConfig {
+    /// UDP routers
+    #[serde(default)]
+    pub routers: HashMap<String, UdpRouter>,
+
+    /// UDP services
+    #[serde(default)]
+    pub services: HashMap<String, UdpService>,
+
+    /// UDP middlewares
+    #[serde(default)]
+    pub middlewares: HashMap<String, UdpMiddlewareConfig>,
+}
+
+/// UDP router configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UdpRouter {
+    /// Entry points to listen on
+    #[serde(default)]
+    pub entry_points: Vec<String>,
+
+    /// Routing rule (ClientIP or catch-all `*`)
+    /// Note: UDP doesn't support SNI since there's no TLS handshake
+    pub rule: String,
+
+    /// Service to route to
+    pub service: String,
+
+    /// Middlewares to apply
+    #[serde(default)]
+    pub middlewares: Vec<String>,
+
+    /// Priority for rule matching
+    #[serde(default)]
+    pub priority: i32,
+}
+
+/// UDP service configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UdpService {
+    /// Load balancer service
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load_balancer: Option<UdpLoadBalancer>,
+
+    /// Weighted service (traffic splitting)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weighted: Option<UdpWeightedService>,
+}
+
+impl UdpService {
+    pub fn service_type(&self) -> &'static str {
+        if self.load_balancer.is_some() {
+            "loadBalancer"
+        } else if self.weighted.is_some() {
+            "weighted"
+        } else {
+            "unknown"
+        }
+    }
+}
+
+/// UDP load balancer configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UdpLoadBalancer {
+    /// Backend servers
+    pub servers: Vec<UdpServer>,
+
+    /// Health check configuration
+    #[serde(default)]
+    pub health_check: Option<UdpHealthCheck>,
+}
+
+/// UDP backend server
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UdpServer {
+    /// Server address (host:port)
+    pub address: String,
+
+    /// Server weight for load balancing
+    #[serde(default = "default_weight")]
+    pub weight: u32,
+}
+
+/// UDP health check configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UdpHealthCheck {
+    /// Health check interval
+    #[serde(default = "default_udp_health_interval")]
+    pub interval: Duration,
+
+    /// Health check timeout
+    #[serde(default = "default_udp_health_timeout")]
+    pub timeout: Duration,
+
+    /// Payload to send for health check (hex-encoded or plain text)
+    #[serde(default)]
+    pub payload: Option<String>,
+
+    /// Expected response pattern (regex)
+    #[serde(default)]
+    pub expected_response: Option<String>,
+}
+
+fn default_udp_health_interval() -> Duration {
+    Duration::from_secs(30)
+}
+
+fn default_udp_health_timeout() -> Duration {
+    Duration::from_secs(5)
+}
+
+/// UDP weighted service for traffic splitting
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UdpWeightedService {
+    /// Services with weights
+    pub services: Vec<UdpWeightedServiceRef>,
+}
+
+/// Reference to a UDP service with weight
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UdpWeightedServiceRef {
+    /// Service name
+    pub name: String,
+
+    /// Weight
+    #[serde(default = "default_weight")]
+    pub weight: u32,
+}
+
+/// UDP middleware configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UdpMiddlewareConfig {
+    /// IP allowlist middleware
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip_allow_list: Option<UdpIpAllowList>,
+
+    /// IP denylist middleware
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip_deny_list: Option<UdpIpDenyList>,
+
+    /// Rate limiting middleware
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<UdpRateLimit>,
+}
+
+impl UdpMiddlewareConfig {
+    pub fn middleware_type(&self) -> &'static str {
+        if self.ip_allow_list.is_some() {
+            "ipAllowList"
+        } else if self.ip_deny_list.is_some() {
+            "ipDenyList"
+        } else if self.rate_limit.is_some() {
+            "rateLimit"
+        } else {
+            "unknown"
+        }
+    }
+}
+
+/// UDP IP allowlist middleware
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UdpIpAllowList {
+    /// Allowed IP ranges (CIDR notation)
+    pub source_range: Vec<String>,
+}
+
+/// UDP IP denylist middleware
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UdpIpDenyList {
+    /// Denied IP ranges (CIDR notation)
+    pub source_range: Vec<String>,
+}
+
+/// UDP rate limit middleware
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UdpRateLimit {
+    /// Maximum packets per period per source IP
+    pub average: u64,
+
+    /// Burst allowance
+    #[serde(default)]
+    pub burst: u64,
+
+    /// Rate limit period
+    #[serde(default = "default_rate_period")]
+    pub period: Duration,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
