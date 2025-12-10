@@ -1,2 +1,12 @@
 /target
 Cargo.lock
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.vscode
+.cursor
+.claude
+.venv
+.venv/

@@ -1,6 +1,6 @@
 [package]
 name = "traffic_management"
-version = "0.9.0"
+version = "0.10.0"
 edition = "2021"
 description = "High-performance reverse proxy and load balancer"
 license = "MIT"
@@ -64,8 +64,17 @@ async-compression = { version = "0.4", features = ["tokio", "gzip", "brotli"] }
 # CLI
 clap = { version = "4", features = ["derive"] }
 
-# HTTP client for ACME
+# HTTP client for ACME and config fetching
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Redis/Valkey client (async, multiplexed connections)
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager", "script"] }
+
+# Hostname for node identification
+hostname = "0.4"
+
+# Async traits
+async-trait = "0.1"
 
 [dev-dependencies]
 criterion = "0.5"

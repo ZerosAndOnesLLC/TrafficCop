@@ -4,6 +4,7 @@ A high-performance reverse proxy and load balancer written in Rust with **Traefi
 
 ## Features
 
+### Core
 - **Traefik v3 Compatible**: Drop-in replacement for Traefik using the same configuration format
 - **High Performance**: Built with Rust for maximum throughput and minimal latency
 - **Zero GC Pauses**: No garbage collector means consistent, predictable response times
@@ -11,15 +12,44 @@ A high-performance reverse proxy and load balancer written in Rust with **Traefi
 - **WebSocket Proxying**: Full WebSocket upgrade and bidirectional streaming support
 - **Hot Config Reload**: Configuration changes applied without restart or dropping connections
 - **Graceful Shutdown**: Connection draining with configurable timeout
-- **Load Balancing**: Round-robin, weighted, least connections, random
-- **Health Checks**: HTTP health checks with configurable thresholds
+
+### Load Balancing
+- **Algorithms**: Round-robin, weighted, least connections, random
+- **Sticky Sessions**: Cookie-based session affinity with distributed support
+- **Health Checks**: Active HTTP health checks with configurable thresholds
+- **Passive Health Checks**: Track failures inline with sliding window
+- **Circuit Breaker**: Automatic backend isolation on failure
+
+### High Availability (v0.10.0)
+- **Distributed State**: Redis/Valkey backend for cluster-wide state sharing
+- **Distributed Rate Limiting**: Eventual consistency with local cache for performance
+- **Distributed Sticky Sessions**: Session affinity works across cluster nodes
+- **Shared Health State**: Coordinated health checking with leader election
+- **Node Draining**: Graceful node removal via admin API
+- **Remote Configuration**: Fetch config from HTTP/S3/Consul endpoints
+
+### Security & TLS
 - **TLS Termination**: Native TLS support via rustls (no OpenSSL dependency)
 - **Let's Encrypt ACME**: Automatic certificate provisioning and renewal
 - **SNI-based Certificates**: Multiple certificates per listener with automatic selection
-- **Middleware Pipeline**: Rate limiting, headers, retry with exponential backoff, compression, IP filtering, CORS, HTTPS redirect, authentication
+- **mTLS**: Mutual TLS with client certificates
+- **JWT Validation**: Built-in JWT middleware (HS256, HS384, HS512)
+
+### Middleware Pipeline
+- **Rate Limiting**: Token bucket with distributed support
+- **Headers**: Custom request/response headers
+- **Retry**: Exponential backoff with configurable attempts
 - **Compression**: gzip, brotli, and zstd response compression
+- **IP Filtering**: Allow/deny lists with CIDR support
+- **CORS**: Full CORS configuration via headers middleware
+- **Authentication**: Basic auth, digest auth, forward auth
+- **Path Manipulation**: Strip prefix, add prefix, replace path
+
+### Observability
 - **Access Logging**: Structured JSON access logs
 - **Metrics**: Prometheus-compatible metrics endpoint
+- **OpenTelemetry**: Distributed tracing with W3C, B3, Jaeger propagation
+- **Admin API**: Runtime inspection dashboard and JSON endpoints
 
 ## Quick Start
 
@@ -326,6 +356,97 @@ metrics:
 
 Access metrics at `http://localhost:9090/metrics`.
 
+### High Availability (Cluster Mode)
+
+Enable distributed state sharing across multiple TrafficCop instances:
+
+```yaml
+# Cluster configuration
+cluster:
+  enabled: true
+  # Unique node identifier (auto-generated if not specified)
+  nodeId: "node-1"
+  # Address other nodes can reach this node at
+  advertiseAddress: "10.0.0.1:8080"
+  # Heartbeat and timeout settings
+  heartbeatInterval: "5s"
+  nodeTimeout: "30s"
+  drainTimeout: "30s"
+
+  # Distributed state backend
+  store:
+    redis:
+      # Single node or cluster endpoints
+      endpoints:
+        - "redis://redis-1:6379"
+        - "redis://redis-2:6379"
+      password: "${REDIS_PASSWORD}"
+      db: 0
+      rootKey: "trafficcop"
+      timeout: "5s"
+      # TLS configuration (use rediss:// for TLS)
+      # tls:
+      #   insecureSkipVerify: false
+      #   ca: "/etc/certs/redis-ca.crt"
+
+  # Remote configuration providers
+  configProviders:
+    - http:
+        endpoint: "https://config-server.example.com/trafficcop/config.yaml"
+        pollInterval: "30s"
+        timeout: "10s"
+        headers:
+          Authorization: "Bearer ${CONFIG_TOKEN}"
+        tls:
+          insecureSkipVerify: false
+```
+
+#### Cluster with Redis Sentinel
+
+```yaml
+cluster:
+  enabled: true
+  store:
+    redis:
+      endpoints:
+        - "redis://sentinel-1:26379"
+        - "redis://sentinel-2:26379"
+        - "redis://sentinel-3:26379"
+      sentinel:
+        masterName: "mymaster"
+        password: "${SENTINEL_PASSWORD}"
+```
+
+#### Admin API Cluster Endpoints
+
+When cluster mode is enabled, additional admin endpoints are available:
+
+```bash
+# Get cluster status
+curl http://localhost:9091/api/cluster
+
+# List all active nodes
+curl http://localhost:9091/api/cluster/nodes
+
+# Drain a node (graceful removal)
+curl -X POST http://localhost:9091/api/cluster/drain?node_id=node-2
+
+# Undrain a node (restore to active)
+curl -X POST http://localhost:9091/api/cluster/undrain
+```
+
+#### Distributed Features
+
+When cluster mode is enabled:
+
+- **Rate Limiting**: Uses sliding window algorithm with eventual consistency. Local cache handles most requests (sub-microsecond), with background sync to Redis every ~100ms. Expect ~1-5% variance across nodes.
+
+- **Sticky Sessions**: Session affinity works across all cluster nodes. Sessions are stored in Redis with configurable TTL.
+
+- **Health Checks**: Leader election ensures only one node performs active health checks. Health status is shared via Redis pub/sub.
+
+- **Node Draining**: Gracefully remove nodes from the cluster. New requests are routed to other nodes while existing connections complete.
+
 ## Architecture
 
 ```
@@ -430,10 +551,16 @@ traffic_management/
 │   ├── proxy/           # Request proxying
 │   ├── balancer/        # Load balancing
 │   ├── middleware/      # Middleware pipeline
-│   ├── health/          # Health checking
+│   ├── health/          # Health checking (local + distributed)
 │   ├── pool/            # Connection pooling
 │   ├── tls/             # TLS/ACME
-│   └── metrics/         # Prometheus metrics
+│   ├── metrics/         # Prometheus metrics
+│   ├── cluster/         # Cluster management (HA)
+│   │   ├── manager.rs   # Node registration, heartbeats, leader election
+│   │   └── provider.rs  # Remote config providers (HTTP, S3, Consul)
+│   └── store/           # Distributed state backends
+│       ├── local.rs     # In-memory store (single node)
+│       └── valkey.rs    # Redis/Valkey store (cluster mode)
 ├── config/
 │   ├── example.yaml     # Full example configuration
 │   └── test.yaml        # Test configuration

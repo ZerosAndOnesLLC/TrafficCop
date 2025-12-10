@@ -42,6 +42,10 @@ pub struct Config {
     /// Access log configuration
     #[serde(default)]
     pub access_log: Option<AccessLogConfig>,
+
+    /// Cluster/HA configuration
+    #[serde(default)]
+    pub cluster: Option<ClusterConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1487,4 +1491,301 @@ pub struct DnsChallenge {
 
     #[serde(default)]
     pub disable_propagation_check: bool,
+}
+
+// =============================================================================
+// Cluster/HA Configuration
+// =============================================================================
+
+/// Cluster configuration for high availability
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ClusterConfig {
+    /// Enable cluster mode
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Unique node identifier (auto-generated if not provided)
+    #[serde(default)]
+    pub node_id: Option<String>,
+
+    /// Node advertise address (for cluster communication)
+    #[serde(default)]
+    pub advertise_address: Option<String>,
+
+    /// Store configuration (Redis/Valkey)
+    #[serde(default)]
+    pub store: Option<StoreConfig>,
+
+    /// Heartbeat interval for cluster membership
+    #[serde(default = "default_heartbeat_interval")]
+    pub heartbeat_interval: Duration,
+
+    /// Node timeout (considered dead if no heartbeat)
+    #[serde(default = "default_node_timeout")]
+    pub node_timeout: Duration,
+
+    /// Drain timeout for graceful shutdown
+    #[serde(default = "default_drain_timeout")]
+    pub drain_timeout: Duration,
+
+    /// Health check leader election TTL
+    #[serde(default = "default_leader_ttl")]
+    pub leader_ttl: Duration,
+
+    /// Remote configuration providers
+    #[serde(default)]
+    pub config_providers: Vec<ConfigProviderConfig>,
+}
+
+fn default_heartbeat_interval() -> Duration {
+    Duration::from_secs(10)
+}
+
+fn default_node_timeout() -> Duration {
+    Duration::from_secs(30)
+}
+
+fn default_drain_timeout() -> Duration {
+    Duration::from_secs(30)
+}
+
+fn default_leader_ttl() -> Duration {
+    Duration::from_secs(15)
+}
+
+/// Store configuration (Traefik redis provider compatible)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum StoreConfig {
+    /// Local in-memory store (single node only)
+    #[serde(rename = "local")]
+    Local,
+
+    /// Redis/Valkey distributed store
+    #[serde(rename = "redis")]
+    Redis(RedisStoreConfig),
+}
+
+impl Default for StoreConfig {
+    fn default() -> Self {
+        StoreConfig::Local
+    }
+}
+
+/// Redis/Valkey store configuration
+/// Compatible with Traefik's redis provider format
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RedisStoreConfig {
+    /// Redis endpoints (supports cluster and sentinel)
+    /// Format: "redis://host:port" or "rediss://host:port" for TLS
+    pub endpoints: Vec<String>,
+
+    /// Password for authentication
+    #[serde(default)]
+    pub password: Option<String>,
+
+    /// Username for authentication (Redis 6+ ACL)
+    #[serde(default)]
+    pub username: Option<String>,
+
+    /// Database number (default 0)
+    #[serde(default)]
+    pub db: i64,
+
+    /// Key prefix for all keys
+    #[serde(default = "default_key_prefix")]
+    pub root_key: String,
+
+    /// TLS configuration
+    #[serde(default)]
+    pub tls: Option<RedisTlsConfig>,
+
+    /// Sentinel configuration (optional)
+    #[serde(default)]
+    pub sentinel: Option<RedisSentinelConfig>,
+
+    /// Connection timeout
+    #[serde(default = "default_redis_timeout")]
+    pub timeout: Duration,
+}
+
+fn default_key_prefix() -> String {
+    "trafficcop".to_string()
+}
+
+fn default_redis_timeout() -> Duration {
+    Duration::from_secs(5)
+}
+
+/// Redis TLS configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RedisTlsConfig {
+    /// CA certificate file path
+    #[serde(default)]
+    pub ca: Option<String>,
+
+    /// Client certificate file path
+    #[serde(default)]
+    pub cert: Option<String>,
+
+    /// Client key file path
+    #[serde(default)]
+    pub key: Option<String>,
+
+    /// Skip TLS verification (not recommended for production)
+    #[serde(default)]
+    pub insecure_skip_verify: bool,
+}
+
+/// Redis Sentinel configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RedisSentinelConfig {
+    /// Sentinel master name
+    pub master_name: String,
+
+    /// Sentinel password (optional)
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+/// Remote configuration provider
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum ConfigProviderConfig {
+    /// HTTP/HTTPS endpoint
+    #[serde(rename = "http")]
+    Http(HttpProviderConfig),
+
+    /// AWS S3
+    #[serde(rename = "s3")]
+    S3(S3ProviderConfig),
+
+    /// Consul KV
+    #[serde(rename = "consul")]
+    Consul(ConsulProviderConfig),
+}
+
+/// HTTP configuration provider
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpProviderConfig {
+    /// URL to fetch configuration from
+    pub endpoint: String,
+
+    /// Poll interval for changes
+    #[serde(default = "default_poll_interval")]
+    pub poll_interval: Duration,
+
+    /// HTTP timeout
+    #[serde(default = "default_http_timeout")]
+    pub timeout: Duration,
+
+    /// HTTP headers to include
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+
+    /// TLS configuration
+    #[serde(default)]
+    pub tls: Option<HttpProviderTls>,
+
+    /// Basic auth credentials
+    #[serde(default)]
+    pub basic_auth: Option<BasicAuthCredentials>,
+}
+
+fn default_poll_interval() -> Duration {
+    Duration::from_secs(30)
+}
+
+fn default_http_timeout() -> Duration {
+    Duration::from_secs(10)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpProviderTls {
+    #[serde(default)]
+    pub ca: Option<String>,
+
+    #[serde(default)]
+    pub cert: Option<String>,
+
+    #[serde(default)]
+    pub key: Option<String>,
+
+    #[serde(default)]
+    pub insecure_skip_verify: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BasicAuthCredentials {
+    pub username: String,
+    pub password: String,
+}
+
+/// S3 configuration provider
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3ProviderConfig {
+    /// S3 bucket name
+    pub bucket: String,
+
+    /// Object key (path to config file)
+    pub key: String,
+
+    /// AWS region
+    pub region: String,
+
+    /// Poll interval for changes
+    #[serde(default = "default_poll_interval")]
+    pub poll_interval: Duration,
+
+    /// Custom endpoint (for S3-compatible services)
+    #[serde(default)]
+    pub endpoint: Option<String>,
+
+    /// AWS credentials (optional, uses default chain if not provided)
+    #[serde(default)]
+    pub credentials: Option<AwsCredentials>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwsCredentials {
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    #[serde(default)]
+    pub session_token: Option<String>,
+}
+
+/// Consul configuration provider
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsulProviderConfig {
+    /// Consul endpoint
+    pub endpoint: String,
+
+    /// KV key path
+    pub key: String,
+
+    /// Consul token
+    #[serde(default)]
+    pub token: Option<String>,
+
+    /// Datacenter
+    #[serde(default)]
+    pub datacenter: Option<String>,
+
+    /// Use long polling (blocking queries)
+    #[serde(default = "default_true")]
+    pub watch: bool,
+
+    /// TLS configuration
+    #[serde(default)]
+    pub tls: Option<HttpProviderTls>,
 }

@@ -3,18 +3,21 @@ use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::{body::Incoming, Request, Response, StatusCode};
 use serde::Serialize;
 use std::sync::Arc;
+use tracing::info;
 
+use crate::cluster::ClusterManager;
 use crate::config::{Config, MiddlewareConfig};
 use crate::health::HealthChecker;
 use crate::router::Router;
 use crate::service::ServiceManager;
 
-/// Admin API handler for runtime inspection
+/// Admin API handler for runtime inspection and cluster management
 pub struct AdminApi {
     config: Arc<Config>,
     _router: Arc<Router>,
     _services: Arc<ServiceManager>,
     _health_checker: Option<Arc<HealthChecker>>,
+    cluster_manager: Option<Arc<ClusterManager>>,
 }
 
 impl AdminApi {
@@ -28,11 +31,18 @@ impl AdminApi {
             _router: router,
             _services: services,
             _health_checker: None,
+            cluster_manager: None,
         }
     }
 
     pub fn with_health_checker(mut self, checker: Arc<HealthChecker>) -> Self {
         self._health_checker = Some(checker);
+        self
+    }
+
+    /// Add cluster manager for HA operations
+    pub fn with_cluster_manager(mut self, manager: Arc<ClusterManager>) -> Self {
+        self.cluster_manager = Some(manager);
         self
     }
 
@@ -59,6 +69,26 @@ impl AdminApi {
                 self.service_detail(name).await
             }
             ("GET", "/api/health") => self.health_status().await,
+            // Cluster/HA endpoints
+            ("GET", "/api/cluster") => self.cluster_status().await,
+            ("GET", "/api/cluster/nodes") => self.cluster_nodes().await,
+            ("POST", "/api/cluster/drain") => self.start_drain().await,
+            ("POST", "/api/cluster/undrain") => self.stop_drain().await,
+            ("GET", path) if path.starts_with("/api/cluster/nodes/") => {
+                let node_id = &path["/api/cluster/nodes/".len()..];
+                if node_id.ends_with("/drain") {
+                    let node_id = node_id.trim_end_matches("/drain");
+                    self.drain_node(node_id).await
+                } else {
+                    self.node_detail(node_id).await
+                }
+            }
+            ("POST", path) if path.starts_with("/api/cluster/nodes/") && path.ends_with("/drain") => {
+                let node_id = path
+                    .trim_start_matches("/api/cluster/nodes/")
+                    .trim_end_matches("/drain");
+                self.drain_node(node_id).await
+            }
             ("GET", "/ping") => self.ping(),
             ("GET", "/") | ("GET", "/dashboard") => self.dashboard(),
             _ => self.not_found(),
@@ -278,6 +308,142 @@ impl AdminApi {
         mw.middleware_type().to_string()
     }
 
+    // =========================================================================
+    // Cluster/HA Endpoints
+    // =========================================================================
+
+    /// Get cluster status
+    async fn cluster_status(&self) -> Response<BoxBody<Bytes, hyper::Error>> {
+        if let Some(cluster) = &self.cluster_manager {
+            let stats = cluster.get_cluster_stats().await;
+            self.json_response(&stats)
+        } else {
+            #[derive(Serialize)]
+            struct NotEnabled {
+                enabled: bool,
+                message: &'static str,
+            }
+            self.json_response(&NotEnabled {
+                enabled: false,
+                message: "Cluster mode not enabled",
+            })
+        }
+    }
+
+    /// Get list of cluster nodes
+    async fn cluster_nodes(&self) -> Response<BoxBody<Bytes, hyper::Error>> {
+        if let Some(cluster) = &self.cluster_manager {
+            match cluster.get_active_nodes().await {
+                Ok(nodes) => self.json_response(&nodes),
+                Err(e) => self.error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &format!("Failed to get nodes: {}", e),
+                ),
+            }
+        } else {
+            self.json_response(&Vec::<()>::new())
+        }
+    }
+
+    /// Get details for a specific node
+    async fn node_detail(&self, node_id: &str) -> Response<BoxBody<Bytes, hyper::Error>> {
+        if let Some(cluster) = &self.cluster_manager {
+            match cluster.store().node_get(node_id).await {
+                Ok(Some(node)) => self.json_response(&node),
+                Ok(None) => self.not_found(),
+                Err(e) => self.error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &format!("Failed to get node: {}", e),
+                ),
+            }
+        } else {
+            self.not_found()
+        }
+    }
+
+    /// Start draining this node
+    async fn start_drain(&self) -> Response<BoxBody<Bytes, hyper::Error>> {
+        if let Some(cluster) = &self.cluster_manager {
+            match cluster.start_drain().await {
+                Ok(()) => {
+                    info!("Node drain started via API");
+                    #[derive(Serialize)]
+                    struct DrainResponse {
+                        success: bool,
+                        message: &'static str,
+                        node_id: String,
+                    }
+                    self.json_response(&DrainResponse {
+                        success: true,
+                        message: "Drain started",
+                        node_id: cluster.node_id().to_string(),
+                    })
+                }
+                Err(e) => self.error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &format!("Failed to start drain: {}", e),
+                ),
+            }
+        } else {
+            self.error_response(
+                StatusCode::BAD_REQUEST,
+                "Cluster mode not enabled",
+            )
+        }
+    }
+
+    /// Stop draining (re-enable this node)
+    async fn stop_drain(&self) -> Response<BoxBody<Bytes, hyper::Error>> {
+        // Note: In production, you'd want a way to cancel draining
+        // For now, this just returns a message
+        self.error_response(
+            StatusCode::NOT_IMPLEMENTED,
+            "Undrain not yet implemented. Restart the node to re-enable.",
+        )
+    }
+
+    /// Drain a specific node (remote drain)
+    async fn drain_node(&self, node_id: &str) -> Response<BoxBody<Bytes, hyper::Error>> {
+        if let Some(cluster) = &self.cluster_manager {
+            // Check if it's this node
+            if cluster.node_id() == node_id {
+                return self.start_drain().await;
+            }
+
+            // For remote nodes, we update their status in the store
+            // The node will pick this up and start draining
+            match cluster.store().node_set_status(node_id, crate::store::NodeStatus::Draining).await {
+                Ok(()) => {
+                    info!("Initiated drain for node {} via API", node_id);
+                    #[derive(Serialize)]
+                    struct DrainResponse {
+                        success: bool,
+                        message: String,
+                        node_id: String,
+                    }
+                    self.json_response(&DrainResponse {
+                        success: true,
+                        message: format!("Drain initiated for node {}", node_id),
+                        node_id: node_id.to_string(),
+                    })
+                }
+                Err(e) => self.error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &format!("Failed to drain node: {}", e),
+                ),
+            }
+        } else {
+            self.error_response(
+                StatusCode::BAD_REQUEST,
+                "Cluster mode not enabled",
+            )
+        }
+    }
+
+    // =========================================================================
+    // Health Endpoints
+    // =========================================================================
+
     /// Health status of backends
     async fn health_status(&self) -> Response<BoxBody<Bytes, hyper::Error>> {
         #[derive(Serialize)]
@@ -415,6 +581,20 @@ impl AdminApi {
             .status(StatusCode::NOT_FOUND)
             .header("content-type", "application/json")
             .body(Self::full_body(r#"{"error":"Not Found"}"#))
+            .unwrap()
+    }
+
+    fn error_response(&self, status: StatusCode, message: &str) -> Response<BoxBody<Bytes, hyper::Error>> {
+        #[derive(Serialize)]
+        struct ErrorResponse<'a> {
+            error: &'a str,
+        }
+        let body = serde_json::to_string(&ErrorResponse { error: message })
+            .unwrap_or_else(|_| format!(r#"{{"error":"{}"}}"#, message));
+        Response::builder()
+            .status(status)
+            .header("content-type", "application/json")
+            .body(Self::full_body(body))
             .unwrap()
     }
 

@@ -1,9 +1,11 @@
 mod checker;
 mod circuit_breaker;
+mod distributed;
 mod passive;
 
 pub use checker::HealthChecker;
 pub use circuit_breaker::{CircuitBreaker, CircuitState};
+pub use distributed::{DistributedHealthChecker, DistributedHealthManager};
 pub use passive::{
     BackendStats, HealthChange, PassiveHealthChecker, PassiveHealthConfig,
     PassiveHealthConfigBuilder,

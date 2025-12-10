@@ -1,87 +1,193 @@
 use crate::config::{Server, Sticky, StickyCookie};
+use crate::store::Store;
 use dashmap::DashMap;
 use hyper::header::{COOKIE, SET_COOKIE};
 use hyper::{Request, Response};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tracing::{debug, warn};
 
 /// Sticky session manager for session affinity
-/// Maps session cookies to specific backend servers
+/// Supports both local-only and distributed (Valkey/Redis) modes
 pub struct StickySessionManager {
     /// Session cookie configuration
     cookie_config: StickyCookie,
-    /// Map of session ID -> (server index, last access time)
-    sessions: DashMap<String, SessionEntry>,
+    /// Local cache of session ID -> server URL
+    local_cache: DashMap<String, LocalCacheEntry>,
     /// Server list for validation
     servers: Arc<Vec<Server>>,
-    /// Session cleanup interval
-    cleanup_interval: Duration,
+    /// Service name (for distributed key prefix)
+    service_name: String,
+    /// Distributed store (optional)
+    store: Option<Arc<dyn Store>>,
+    /// Session TTL
+    session_ttl: Duration,
+    /// Local cache TTL (shorter than session TTL for freshness)
+    local_cache_ttl: Duration,
     /// Last cleanup time
     last_cleanup: std::sync::Mutex<Instant>,
 }
 
-struct SessionEntry {
-    server_index: usize,
-    last_access: Instant,
+struct LocalCacheEntry {
+    server_url: String,
+    cached_at: Instant,
 }
 
 impl StickySessionManager {
-    pub fn new(sticky: &Sticky, servers: Arc<Vec<Server>>) -> Option<Self> {
+    /// Create a new local-only sticky session manager
+    pub fn new(sticky: &Sticky, servers: Arc<Vec<Server>>, service_name: &str) -> Option<Self> {
         let cookie_config = sticky.cookie.clone()?;
-
-        // Default max age to 24 hours if not specified
-        let max_age_secs = cookie_config.max_age.unwrap_or(86400);
+        let max_age_secs = cookie_config.max_age.unwrap_or(86400) as u64;
 
         Some(Self {
             cookie_config,
-            sessions: DashMap::new(),
+            local_cache: DashMap::new(),
             servers,
-            cleanup_interval: Duration::from_secs(max_age_secs as u64 / 10), // Cleanup at 10% of max age
+            service_name: service_name.to_string(),
+            store: None,
+            session_ttl: Duration::from_secs(max_age_secs),
+            local_cache_ttl: Duration::from_secs(max_age_secs.min(300)), // Max 5 min local cache
             last_cleanup: std::sync::Mutex::new(Instant::now()),
         })
     }
 
-    /// Get the sticky server for a request, if one exists
+    /// Create with distributed store backing
+    pub fn with_store(
+        sticky: &Sticky,
+        servers: Arc<Vec<Server>>,
+        service_name: &str,
+        store: Arc<dyn Store>,
+    ) -> Option<Self> {
+        let cookie_config = sticky.cookie.clone()?;
+        let max_age_secs = cookie_config.max_age.unwrap_or(86400) as u64;
+
+        Some(Self {
+            cookie_config,
+            local_cache: DashMap::new(),
+            servers,
+            service_name: service_name.to_string(),
+            store: Some(store),
+            session_ttl: Duration::from_secs(max_age_secs),
+            local_cache_ttl: Duration::from_secs(max_age_secs.min(300)),
+            last_cleanup: std::sync::Mutex::new(Instant::now()),
+        })
+    }
+
+    /// Get the sticky server for a request (sync, local cache only)
+    /// Use this for hot path when eventual consistency is acceptable
     pub fn get_sticky_server<B>(&self, req: &Request<B>) -> Option<usize> {
-        // Extract session ID from cookie
         let session_id = self.extract_session_cookie(req)?;
 
-        // Look up session
-        let entry = self.sessions.get(&session_id)?;
-
-        // Validate server index is still valid
-        if entry.server_index < self.servers.len() {
-            // Update last access time
-            drop(entry);
-            if let Some(mut entry) = self.sessions.get_mut(&session_id) {
-                entry.last_access = Instant::now();
+        // Check local cache first
+        if let Some(entry) = self.local_cache.get(&session_id) {
+            if entry.cached_at.elapsed() < self.local_cache_ttl {
+                return self.find_server_index(&entry.server_url);
             }
-            Some(self.sessions.get(&session_id)?.server_index)
-        } else {
-            // Server no longer exists, remove stale session
-            self.sessions.remove(&session_id);
-            None
         }
+
+        None
+    }
+
+    /// Get the sticky server (async, checks distributed store)
+    pub async fn get_sticky_server_distributed<B>(&self, req: &Request<B>) -> Option<usize> {
+        let session_id = self.extract_session_cookie(req)?;
+
+        // Check local cache first
+        if let Some(entry) = self.local_cache.get(&session_id) {
+            if entry.cached_at.elapsed() < self.local_cache_ttl {
+                return self.find_server_index(&entry.server_url);
+            }
+        }
+
+        // Check distributed store
+        if let Some(store) = &self.store {
+            match store.sticky_session_get(&self.service_name, &session_id).await {
+                Ok(Some(server_url)) => {
+                    // Update local cache
+                    self.local_cache.insert(
+                        session_id.clone(),
+                        LocalCacheEntry {
+                            server_url: server_url.clone(),
+                            cached_at: Instant::now(),
+                        },
+                    );
+
+                    return self.find_server_index(&server_url);
+                }
+                Ok(None) => {
+                    debug!("Session {} not found in distributed store", session_id);
+                }
+                Err(e) => {
+                    warn!("Failed to get session from store: {}", e);
+                }
+            }
+        }
+
+        None
     }
 
     /// Create a new sticky session for a server
-    pub fn create_session(&self, server_index: usize) -> String {
-        // Generate a unique session ID
+    pub fn create_session(&self, server_index: usize) -> Option<String> {
+        let server = self.servers.get(server_index)?;
         let session_id = generate_session_id();
 
-        // Store the session
-        self.sessions.insert(
+        // Store in local cache
+        self.local_cache.insert(
             session_id.clone(),
-            SessionEntry {
-                server_index,
-                last_access: Instant::now(),
+            LocalCacheEntry {
+                server_url: server.url.clone(),
+                cached_at: Instant::now(),
             },
         );
 
-        // Maybe do cleanup
+        // Store in distributed store (async, non-blocking)
+        if let Some(store) = self.store.clone() {
+            let service_name = self.service_name.clone();
+            let session_id_clone = session_id.clone();
+            let server_url = server.url.clone();
+            let ttl = self.session_ttl;
+
+            tokio::spawn(async move {
+                if let Err(e) = store
+                    .sticky_session_set(&service_name, &session_id_clone, &server_url, ttl)
+                    .await
+                {
+                    warn!("Failed to store session in distributed store: {}", e);
+                }
+            });
+        }
+
+        // Maybe cleanup
         self.maybe_cleanup();
 
-        session_id
+        Some(session_id)
+    }
+
+    /// Create a session and store it synchronously (for when you need to wait)
+    pub async fn create_session_sync(&self, server_index: usize) -> Option<String> {
+        let server = self.servers.get(server_index)?;
+        let session_id = generate_session_id();
+
+        // Store in local cache
+        self.local_cache.insert(
+            session_id.clone(),
+            LocalCacheEntry {
+                server_url: server.url.clone(),
+                cached_at: Instant::now(),
+            },
+        );
+
+        // Store in distributed store
+        if let Some(store) = &self.store {
+            if let Err(e) = store
+                .sticky_session_set(&self.service_name, &session_id, &server.url, self.session_ttl)
+                .await
+            {
+                warn!("Failed to store session in distributed store: {}", e);
+            }
+        }
+
+        Some(session_id)
     }
 
     /// Get the Set-Cookie header value for a new session
@@ -140,27 +246,45 @@ impl StickySessionManager {
         None
     }
 
-    /// Periodically clean up expired sessions
+    /// Find server index by URL
+    fn find_server_index(&self, server_url: &str) -> Option<usize> {
+        self.servers.iter().position(|s| s.url == server_url)
+    }
+
+    /// Periodically clean up expired local cache entries
     fn maybe_cleanup(&self) {
         let mut last_cleanup = self.last_cleanup.lock().unwrap();
-        if last_cleanup.elapsed() < self.cleanup_interval {
+        let cleanup_interval = self.local_cache_ttl / 10;
+
+        if last_cleanup.elapsed() < cleanup_interval {
             return;
         }
 
         *last_cleanup = Instant::now();
         drop(last_cleanup);
 
-        let max_age = Duration::from_secs(
-            self.cookie_config.max_age.unwrap_or(86400) as u64
-        );
+        let now = Instant::now();
+        self.local_cache
+            .retain(|_, entry| now.duration_since(entry.cached_at) < self.local_cache_ttl);
+    }
 
-        // Remove expired sessions
-        self.sessions.retain(|_, entry| entry.last_access.elapsed() < max_age);
+    /// Delete a session (e.g., on logout)
+    pub async fn delete_session(&self, session_id: &str) {
+        self.local_cache.remove(session_id);
+
+        if let Some(store) = &self.store {
+            if let Err(e) = store
+                .sticky_session_delete(&self.service_name, session_id)
+                .await
+            {
+                warn!("Failed to delete session from distributed store: {}", e);
+            }
+        }
     }
 
     /// Get session count (for metrics)
-    pub fn session_count(&self) -> usize {
-        self.sessions.len()
+    pub fn local_session_count(&self) -> usize {
+        self.local_cache.len()
     }
 
     /// Get cookie name
@@ -239,18 +363,22 @@ mod tests {
 
     #[test]
     fn test_sticky_session_creation() {
-        let manager = StickySessionManager::new(&test_sticky_config(), test_servers()).unwrap();
+        let manager =
+            StickySessionManager::new(&test_sticky_config(), test_servers(), "test-service")
+                .unwrap();
 
         let session_id = manager.create_session(0);
-        assert!(!session_id.is_empty());
-        assert_eq!(manager.session_count(), 1);
+        assert!(session_id.is_some());
+        assert_eq!(manager.local_session_count(), 1);
     }
 
     #[test]
     fn test_sticky_session_lookup() {
-        let manager = StickySessionManager::new(&test_sticky_config(), test_servers()).unwrap();
+        let manager =
+            StickySessionManager::new(&test_sticky_config(), test_servers(), "test-service")
+                .unwrap();
 
-        let session_id = manager.create_session(1);
+        let session_id = manager.create_session(1).unwrap();
 
         // Create a request with the session cookie
         let req = Request::builder()
@@ -264,7 +392,9 @@ mod tests {
 
     #[test]
     fn test_sticky_session_no_cookie() {
-        let manager = StickySessionManager::new(&test_sticky_config(), test_servers()).unwrap();
+        let manager =
+            StickySessionManager::new(&test_sticky_config(), test_servers(), "test-service")
+                .unwrap();
 
         let req = Request::builder().body(()).unwrap();
 
@@ -274,7 +404,9 @@ mod tests {
 
     #[test]
     fn test_set_cookie_header() {
-        let manager = StickySessionManager::new(&test_sticky_config(), test_servers()).unwrap();
+        let manager =
+            StickySessionManager::new(&test_sticky_config(), test_servers(), "test-service")
+                .unwrap();
 
         let session_id = "test-session-123";
         let cookie = manager.set_cookie_header(session_id);
@@ -288,7 +420,9 @@ mod tests {
 
     #[test]
     fn test_extract_session_cookie() {
-        let manager = StickySessionManager::new(&test_sticky_config(), test_servers()).unwrap();
+        let manager =
+            StickySessionManager::new(&test_sticky_config(), test_servers(), "test-service")
+                .unwrap();
 
         // Multiple cookies
         let req = Request::builder()

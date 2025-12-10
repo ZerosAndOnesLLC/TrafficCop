@@ -1,6 +1,6 @@
 # TrafficCop - Remaining Features
 
-High-performance reverse proxy and load balancer. Current version: **v0.9.0**
+High-performance reverse proxy and load balancer. Current version: **v0.10.0**
 
 ---
 
@@ -137,6 +137,12 @@ TrafficCop now uses **Traefik v3 compatible configuration format**. Existing Tra
 - [x] Passive health checks (track failures inline with sliding window)
 
 ---
+
+## ✅ High Priority (COMPLETED v0.10.0)
+ - [x] HA (HA proxying with load balancing) - Eventual consistency model with local caching
+ - [x] Redis / Valkey for HA back-end - Full Store trait with TLS support
+ - [x] Point to configuration URLs for configuration - HTTP provider with polling and ETag caching
+ - [x] Node Draining - Graceful drain via admin API with cluster coordination
 
 ## 🟢 Nice to Have
 
