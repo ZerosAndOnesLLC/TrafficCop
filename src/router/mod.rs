@@ -53,6 +53,8 @@ impl Router {
         entrypoint: &str,
         host: Option<&str>,
         path: &str,
+        query: Option<&str>,
+        method: Option<&str>,
         headers: &hyper::HeaderMap,
     ) -> Option<&Route> {
         self.routes.iter().find(|route| {
@@ -65,7 +67,7 @@ impl Router {
             }
 
             // Check rule matches
-            route.matcher.matches(host, path, headers)
+            route.matcher.matches(host, path, query, method, headers)
         })
     }
 }

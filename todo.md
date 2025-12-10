@@ -1,6 +1,6 @@
 # TrafficCop - Remaining Features
 
-High-performance reverse proxy and load balancer. Current version: **v0.8.0**
+High-performance reverse proxy and load balancer. Current version: **v0.9.0**
 
 ---
 
@@ -125,16 +125,16 @@ TrafficCop now uses **Traefik v3 compatible configuration format**. Existing Tra
 
 ---
 
-## 🟡 Medium Priority
+## ✅ Medium Priority (COMPLETED v0.9.0)
 
 ### Features
-- [ ] HTTP/2 upstream connections
-- [ ] Query parameter routing
+- [x] HTTP/2 upstream connections (connection pooling with multiplexing)
+- [x] Query parameter routing (with URL decoding support)
 
 ### Observability
-- [ ] OpenTelemetry tracing integration
-- [ ] Admin API for runtime inspection
-- [ ] Passive health checks (track failures inline)
+- [x] OpenTelemetry tracing integration (W3C, B3, Jaeger propagation)
+- [x] Admin API for runtime inspection (dashboard, JSON endpoints)
+- [x] Passive health checks (track failures inline with sliding window)
 
 ---
 

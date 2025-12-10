@@ -34,6 +34,8 @@ impl Rule {
         &self,
         host: Option<&str>,
         path: &str,
+        query: Option<&str>,
+        method: Option<&str>,
         headers: &hyper::HeaderMap,
     ) -> bool {
         match self {
@@ -60,24 +62,73 @@ impl Rule {
                     .map(|v| re.is_match(v))
                     .unwrap_or(false)
             }
-            Rule::Query(_, _) => {
-                // Query matching would need the full URI
-                // Simplified for now
-                false
+            Rule::Query(key, expected_value) => {
+                query.map(|q| Self::query_param_matches(q, key, expected_value)).unwrap_or(false)
             }
-            Rule::Method(_method) => {
-                // Method matching would need the request method
-                // Handled separately in the matcher
-                false
+            Rule::Method(expected_method) => {
+                method.map(|m| m.eq_ignore_ascii_case(expected_method)).unwrap_or(false)
             }
             Rule::And(a, b) => {
-                a.matches(host, path, headers) && b.matches(host, path, headers)
+                a.matches(host, path, query, method, headers) && b.matches(host, path, query, method, headers)
             }
             Rule::Or(a, b) => {
-                a.matches(host, path, headers) || b.matches(host, path, headers)
+                a.matches(host, path, query, method, headers) || b.matches(host, path, query, method, headers)
             }
-            Rule::Not(r) => !r.matches(host, path, headers),
+            Rule::Not(r) => !r.matches(host, path, query, method, headers),
         }
+    }
+
+    /// Check if a query string contains a parameter with the expected value
+    fn query_param_matches(query: &str, key: &str, expected_value: &str) -> bool {
+        for pair in query.split('&') {
+            let mut parts = pair.splitn(2, '=');
+            if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
+                // URL decode the key and value for comparison
+                let decoded_key = Self::url_decode(k);
+                let decoded_value = Self::url_decode(v);
+
+                if decoded_key == key && decoded_value == expected_value {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Simple URL decode (handles %XX encoding)
+    fn url_decode(input: &str) -> String {
+        let mut result = String::with_capacity(input.len());
+        let mut chars = input.chars().peekable();
+
+        while let Some(c) = chars.next() {
+            if c == '%' {
+                // Try to read two hex digits
+                let mut hex = String::new();
+                for _ in 0..2 {
+                    if let Some(&next) = chars.peek() {
+                        if next.is_ascii_hexdigit() {
+                            hex.push(chars.next().unwrap());
+                        }
+                    }
+                }
+                if hex.len() == 2 {
+                    if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                        result.push(byte as char);
+                        continue;
+                    }
+                }
+                // If decode failed, keep original
+                result.push('%');
+                result.push_str(&hex);
+            } else if c == '+' {
+                // Plus is space in query strings
+                result.push(' ');
+            } else {
+                result.push(c);
+            }
+        }
+
+        result
     }
 }
 
@@ -298,5 +349,58 @@ mod tests {
     fn test_parse_or() {
         let rule = RuleParser::parse("Host(`a.com`) || Host(`b.com`)").unwrap();
         assert!(matches!(rule, Rule::Or(_, _)));
+    }
+
+    #[test]
+    fn test_parse_query() {
+        let rule = RuleParser::parse("Query(`version`, `v2`)").unwrap();
+        assert!(matches!(rule, Rule::Query(k, v) if k == "version" && v == "v2"));
+    }
+
+    #[test]
+    fn test_query_matching() {
+        let rule = RuleParser::parse("Query(`env`, `prod`)").unwrap();
+        let headers = hyper::HeaderMap::new();
+
+        // Should match
+        assert!(rule.matches(None, "/", Some("env=prod"), None, &headers));
+        assert!(rule.matches(None, "/", Some("foo=bar&env=prod"), None, &headers));
+        assert!(rule.matches(None, "/", Some("env=prod&other=value"), None, &headers));
+
+        // Should not match
+        assert!(!rule.matches(None, "/", Some("env=dev"), None, &headers));
+        assert!(!rule.matches(None, "/", None, None, &headers));
+        assert!(!rule.matches(None, "/", Some("other=value"), None, &headers));
+    }
+
+    #[test]
+    fn test_query_url_decode() {
+        let rule = RuleParser::parse("Query(`name`, `hello world`)").unwrap();
+        let headers = hyper::HeaderMap::new();
+
+        // URL encoded space as %20
+        assert!(rule.matches(None, "/", Some("name=hello%20world"), None, &headers));
+        // URL encoded space as +
+        assert!(rule.matches(None, "/", Some("name=hello+world"), None, &headers));
+    }
+
+    #[test]
+    fn test_method_matching() {
+        let rule = RuleParser::parse("Method(`POST`)").unwrap();
+        let headers = hyper::HeaderMap::new();
+
+        assert!(rule.matches(None, "/", None, Some("POST"), &headers));
+        assert!(rule.matches(None, "/", None, Some("post"), &headers));
+        assert!(!rule.matches(None, "/", None, Some("GET"), &headers));
+    }
+
+    #[test]
+    fn test_combined_query_and_path() {
+        let rule = RuleParser::parse("PathPrefix(`/api`) && Query(`version`, `v2`)").unwrap();
+        let headers = hyper::HeaderMap::new();
+
+        assert!(rule.matches(None, "/api/users", Some("version=v2"), None, &headers));
+        assert!(!rule.matches(None, "/api/users", Some("version=v1"), None, &headers));
+        assert!(!rule.matches(None, "/other", Some("version=v2"), None, &headers));
     }
 }

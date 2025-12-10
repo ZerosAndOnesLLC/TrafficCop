@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod balancer;
 pub mod config;
 pub mod health;
@@ -8,6 +9,7 @@ pub mod proxy;
 pub mod router;
 pub mod server;
 pub mod service;
+pub mod telemetry;
 pub mod tls;
 
 pub use config::Config;

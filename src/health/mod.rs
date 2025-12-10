@@ -1,8 +1,13 @@
 mod checker;
 mod circuit_breaker;
+mod passive;
 
 pub use checker::HealthChecker;
 pub use circuit_breaker::{CircuitBreaker, CircuitState};
+pub use passive::{
+    BackendStats, HealthChange, PassiveHealthChecker, PassiveHealthConfig,
+    PassiveHealthConfigBuilder,
+};
 
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};

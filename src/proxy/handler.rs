@@ -61,6 +61,7 @@ impl ProxyHandler {
             .map(|s| s.to_string());
 
         let path = req.uri().path().to_string();
+        let query = req.uri().query().map(|q| q.to_string());
         let method = req.method().clone();
 
         debug!(
@@ -69,7 +70,14 @@ impl ProxyHandler {
         );
 
         // Find matching route
-        let route = match router.match_request(entrypoint, host.as_deref(), &path, req.headers()) {
+        let route = match router.match_request(
+            entrypoint,
+            host.as_deref(),
+            &path,
+            query.as_deref(),
+            Some(method.as_str()),
+            req.headers(),
+        ) {
             Some(route) => route,
             None => {
                 debug!(

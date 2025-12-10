@@ -16,8 +16,10 @@ impl RouteMatcher {
         &self,
         host: Option<&str>,
         path: &str,
+        query: Option<&str>,
+        method: Option<&str>,
         headers: &HeaderMap,
     ) -> bool {
-        self.rule.matches(host, path, headers)
+        self.rule.matches(host, path, query, method, headers)
     }
 }
