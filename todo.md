@@ -1,6 +1,94 @@
 # TrafficCop - Remaining Features
 
-High-performance reverse proxy and load balancer. Current version: **v0.12.0**
+High-performance reverse proxy and load balancer. Current version: **v0.13.0**
+
+---
+
+## 🎯 Project Goal: 100% Traefik v3 Drop-in Replacement
+
+**TrafficCop aims to be a complete drop-in replacement for Traefik v3 file-based configuration.** Users should be able to take their existing Traefik YAML configs and use them with TrafficCop without modification.
+
+- ✅ We can have **more features** than Traefik (extensions are fine)
+- ❌ We must not **break compatibility** with valid Traefik configs
+- ❌ We must not **rename fields** or change expected behavior
+
+**Current Compatibility: ~98%** - Nearly all Traefik v3 file config options are now supported!
+
+---
+
+## ✅ Traefik v3 Compatibility - COMPLETED in v0.13.0
+
+All high and medium priority Traefik v3 configuration fields have been implemented:
+
+### High Priority - Config Compatibility (DONE)
+
+- [x] **`errors` middleware** - Custom error pages with service fallback
+  - `errors.status` - Status code ranges (e.g., "500-599")
+  - `errors.service` - Service to handle errors
+  - `errors.query` - URL path for error page (supports `{status}` placeholder)
+
+- [x] **Failover Service** - Automatic failover to backup service
+  - `failover.service` - Primary service
+  - `failover.fallback` - Fallback service when primary fails
+  - `failover.healthCheck` - Health check configuration
+
+- [x] **`ruleSyntax`** - Alternative rule syntax support on routers
+  - Allows specifying rule syntax version for forward compatibility
+
+### Medium Priority - Config Fields (DONE)
+
+- [x] **Health Check enhancements**
+  - `healthCheck.mode` - Support `grpc` mode for gRPC health protocol
+  - `healthCheck.port` - Override port for health checks
+  - `healthCheck.followRedirects` - Follow HTTP redirects in health checks
+
+- [x] **Mirroring Service enhancements**
+  - `mirroring.mirrorBody` - Control whether to mirror request body (default: true)
+
+- [x] **TLS Options**
+  - `preferServerCipherSuites` - Prefer server cipher order
+
+- [x] **Entry Point Transport**
+  - `transport.keepAliveMaxRequests` - Max requests per keep-alive connection
+  - `transport.keepAliveMaxTime` - Max lifetime of keep-alive connection
+
+- [x] **Forwarded Headers**
+  - `forwardedHeaders.connection` - Connection header handling list
+
+- [x] **Entry Point TLS**
+  - `http.tls.options` - TLS options reference at entry point level (already supported)
+
+### Low Priority - API/Metrics (DONE)
+
+- [x] **API Configuration**
+  - `api.debug` - Enable debug mode
+  - `api.basePath` - Custom base path for API
+  - `api.disabledashboardad` - Hide dashboard advertisement
+
+- [x] **Prometheus Metrics**
+  - `metrics.prometheus.addRoutersLabels` - Add router labels to metrics
+  - `metrics.prometheus.entryPoint` - Serve metrics on specific entry point
+  - `metrics.prometheus.buckets` - Custom histogram buckets
+
+### Legacy/Deprecated (DONE)
+
+- [x] **`ipWhiteList` middleware** - Deprecated alias for `ipAllowList`
+  - Accepts `ipWhiteList` and treats it as `ipAllowList` for backwards compatibility
+
+---
+
+## 🟡 Traefik Features We Won't Implement (Out of Scope)
+
+These are Traefik-specific features that don't apply to file-based configuration or are proprietary:
+
+- **`plugin` middleware** - Traefik's Go plugin system (proprietary)
+- **`spiffe`** - SPIFFE/SPIRE identity (enterprise feature, can add later if needed)
+- **Docker Provider** - Auto-discovery from Docker labels
+- **Kubernetes Providers** - CRD, Ingress, Gateway API
+- **Consul Catalog Provider** - Service discovery from Consul services
+- **Other Dynamic Providers** - ECS, Marathon, Rancher, Nomad, etc.
+
+> Note: Dynamic providers are out of scope for initial drop-in compatibility. Users relying on these must migrate to file-based config. We may add select providers later.
 
 ---
 

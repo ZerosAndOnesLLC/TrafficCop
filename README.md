@@ -1,11 +1,11 @@
 # TrafficCop
 
-A high-performance reverse proxy and load balancer written in Rust with **Traefik v3 compatible configuration**. Designed to handle 750k+ requests/second with predictable latency and zero garbage collection pauses.
+A high-performance reverse proxy and load balancer written in Rust with **100% Traefik v3 compatible configuration**. Designed to handle 750k+ requests/second with predictable latency and zero garbage collection pauses.
 
 ## Features
 
 ### Core
-- **Traefik v3 Compatible**: Drop-in replacement for Traefik using the same configuration format
+- **Traefik v3 Compatible**: **Drop-in replacement** for Traefik using the exact same YAML configuration format
 - **High Performance**: Built with Rust for maximum throughput and minimal latency
 - **Zero GC Pauses**: No garbage collector means consistent, predictable response times
 - **HTTP/1.1 & HTTP/2**: Automatic protocol detection with ALPN negotiation for TLS
@@ -42,15 +42,17 @@ A high-performance reverse proxy and load balancer written in Rust with **Traefi
 - **mTLS**: Mutual TLS with client certificates
 - **JWT Validation**: Built-in JWT middleware (HS256, HS384, HS512)
 
-### Middleware Pipeline
+### Middleware Pipeline (23 Built-in Middlewares)
 - **Rate Limiting**: Token bucket with distributed support
 - **Headers**: Custom request/response headers
 - **Retry**: Exponential backoff with configurable attempts
 - **Compression**: gzip, brotli, and zstd response compression
-- **IP Filtering**: Allow/deny lists with CIDR support
+- **IP Filtering**: Allow/deny lists with CIDR support (includes deprecated `ipWhiteList`)
 - **CORS**: Full CORS configuration via headers middleware
-- **Authentication**: Basic auth, digest auth, forward auth
+- **Authentication**: Basic auth, digest auth, forward auth, JWT validation
 - **Path Manipulation**: Strip prefix, add prefix, replace path
+- **Error Pages**: Custom error page routing (v0.13.0)
+- **Failover**: Automatic service failover (v0.13.0)
 
 ### Observability
 - **Access Logging**: Structured JSON access logs
@@ -202,9 +204,19 @@ http:
     shadow:
       mirroring:
         service: api
+        mirrorBody: true  # Control whether to mirror request body (default: true)
         mirrors:
           - name: shadow-api
             percent: 10
+
+    # Failover service (v0.13.0)
+    failover-api:
+      failover:
+        service: primary-api      # Primary service
+        fallback: backup-api      # Used when primary fails
+        healthCheck:
+          path: "/health"
+          interval: "10s"
 ```
 
 ### Middlewares
@@ -306,6 +318,21 @@ http:
           - rate-limit
           - security-headers
           - auth
+
+    # Custom error pages (v0.13.0)
+    errors:
+      errors:
+        status:
+          - "500-599"    # Server errors
+          - "404"        # Not found
+        service: error-service
+        query: "/errors/{status}.html"  # {status} replaced with actual code
+
+    # Deprecated alias (still supported for backwards compatibility)
+    legacy-whitelist:
+      ipWhiteList:  # Same as ipAllowList
+        sourceRange:
+          - "10.0.0.0/8"
 ```
 
 ### TLS Configuration

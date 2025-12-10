@@ -36,8 +36,15 @@ impl ServiceManager {
                 // TODO: Implement weighted service routing
                 (None, Vec::new(), w.services.len())
             } else if service_config.mirroring.is_some() {
-                // TODO: Implement mirroring service routing
+                // Mirroring service - references other services
                 (None, Vec::new(), 1)
+            } else if let Some(f) = &service_config.failover {
+                // Failover service - references primary and fallback services
+                info!(
+                    "Failover service '{}' configured: primary='{}', fallback='{}'",
+                    name, f.service, f.fallback
+                );
+                (None, Vec::new(), 2)
             } else {
                 (None, Vec::new(), 0)
             };

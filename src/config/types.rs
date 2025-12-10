@@ -108,6 +108,10 @@ pub struct TcpRouter {
     /// Routing rule (HostSNI for TLS, or catch-all `*`)
     pub rule: String,
 
+    /// Rule syntax version (for forward compatibility)
+    #[serde(default)]
+    pub rule_syntax: Option<String>,
+
     /// Service to route to
     pub service: String,
 
@@ -568,6 +572,18 @@ pub struct PrometheusConfig {
 
     #[serde(default)]
     pub add_services_labels: bool,
+
+    /// Add router labels to metrics
+    #[serde(default)]
+    pub add_routers_labels: bool,
+
+    /// Serve metrics on specific entry point (alternative to address)
+    #[serde(default)]
+    pub entry_point: Option<String>,
+
+    /// Custom histogram buckets
+    #[serde(default)]
+    pub buckets: Vec<f64>,
 }
 
 fn default_metrics_address() -> String {
@@ -582,6 +598,18 @@ pub struct ApiConfig {
 
     #[serde(default)]
     pub insecure: bool,
+
+    /// Enable debug mode for API
+    #[serde(default)]
+    pub debug: bool,
+
+    /// Custom base path for API (default: "/api")
+    #[serde(default)]
+    pub base_path: Option<String>,
+
+    /// Hide dashboard advertisement
+    #[serde(default, rename = "disabledashboardad")]
+    pub disable_dashboard_ad: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -723,6 +751,10 @@ pub struct ForwardedHeaders {
 
     #[serde(default)]
     pub insecure: bool,
+
+    /// Connection header handling - list of hop-by-hop headers to remove
+    #[serde(default)]
+    pub connection: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -733,6 +765,14 @@ pub struct EntryPointTransport {
 
     #[serde(default)]
     pub life_cycle: Option<LifeCycle>,
+
+    /// Maximum number of requests per keep-alive connection (0 = unlimited)
+    #[serde(default)]
+    pub keep_alive_max_requests: Option<i64>,
+
+    /// Maximum time a keep-alive connection can be used
+    #[serde(default)]
+    pub keep_alive_max_time: Option<Duration>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -815,6 +855,9 @@ pub struct Service {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mirroring: Option<MirroringService>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failover: Option<FailoverService>,
 }
 
 impl Service {
@@ -826,6 +869,8 @@ impl Service {
             "weighted"
         } else if self.mirroring.is_some() {
             "mirroring"
+        } else if self.failover.is_some() {
+            "failover"
         } else {
             "unknown"
         }
@@ -912,17 +957,29 @@ pub struct HealthCheck {
     #[serde(default)]
     pub scheme: Option<String>,
 
+    /// Health check mode: "http" (default) or "grpc"
+    #[serde(default)]
+    pub mode: Option<String>,
+
     #[serde(default)]
     pub method: Option<String>,
 
     #[serde(default)]
     pub status: Option<u16>,
 
+    /// Override port for health check (uses server port by default)
+    #[serde(default)]
+    pub port: Option<u16>,
+
     #[serde(default)]
     pub hostname: Option<String>,
 
     #[serde(default)]
     pub headers: HashMap<String, String>,
+
+    /// Whether to follow HTTP redirects in health checks
+    #[serde(default)]
+    pub follow_redirects: bool,
 }
 
 fn default_health_path() -> String {
@@ -975,6 +1032,25 @@ pub struct MirroringService {
 
     #[serde(default)]
     pub max_body_size: Option<i64>,
+
+    /// Whether to mirror the request body (default: true)
+    #[serde(default = "default_true")]
+    pub mirror_body: bool,
+}
+
+/// Failover service - automatic failover to backup service
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FailoverService {
+    /// Primary service name
+    pub service: String,
+
+    /// Fallback service name (used when primary fails)
+    pub fallback: String,
+
+    /// Health check configuration for failover detection
+    #[serde(default)]
+    pub health_check: Option<HealthCheck>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1072,6 +1148,10 @@ pub struct Router {
     pub entry_points: Vec<String>,
 
     pub rule: String,
+
+    /// Rule syntax version (for forward compatibility)
+    #[serde(default)]
+    pub rule_syntax: Option<String>,
 
     pub service: String,
 
@@ -1202,6 +1282,14 @@ pub struct MiddlewareConfig {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jwt: Option<JwtConfig>,
+
+    /// Errors middleware - custom error pages
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub errors: Option<ErrorsConfig>,
+
+    /// Deprecated alias for ipAllowList (for backwards compatibility)
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "ipWhiteList")]
+    pub ip_white_list: Option<IpAllowListConfig>,
 }
 
 impl MiddlewareConfig {
@@ -1209,6 +1297,7 @@ impl MiddlewareConfig {
     pub fn middleware_type(&self) -> &'static str {
         if self.rate_limit.is_some() { "rateLimit" }
         else if self.ip_allow_list.is_some() { "ipAllowList" }
+        else if self.ip_white_list.is_some() { "ipWhiteList" }
         else if self.ip_deny_list.is_some() { "ipDenyList" }
         else if self.headers.is_some() { "headers" }
         else if self.basic_auth.is_some() { "basicAuth" }
@@ -1231,7 +1320,13 @@ impl MiddlewareConfig {
         else if self.content_type.is_some() { "contentType" }
         else if self.grpc_web.is_some() { "grpcWeb" }
         else if self.jwt.is_some() { "jwt" }
+        else if self.errors.is_some() { "errors" }
         else { "unknown" }
+    }
+
+    /// Get the effective IP allow list config (supports deprecated ipWhiteList)
+    pub fn get_ip_allow_list(&self) -> Option<&IpAllowListConfig> {
+        self.ip_allow_list.as_ref().or(self.ip_white_list.as_ref())
     }
 }
 
@@ -1815,6 +1910,20 @@ pub struct GrpcWebConfig {
     pub allow_origins: Vec<String>,
 }
 
+/// Errors middleware configuration - custom error pages
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ErrorsConfig {
+    /// Status code ranges to intercept (e.g., "500-599", "404")
+    pub status: Vec<String>,
+
+    /// Service to handle error responses
+    pub service: String,
+
+    /// Query path for error page (supports {status} placeholder)
+    pub query: String,
+}
+
 // =============================================================================
 // TLS Configuration
 // =============================================================================
@@ -1866,6 +1975,10 @@ pub struct TlsOptions {
 
     #[serde(default)]
     pub alpn_protocols: Vec<String>,
+
+    /// Prefer server cipher suites over client preferences
+    #[serde(default)]
+    pub prefer_server_cipher_suites: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

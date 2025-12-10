@@ -117,6 +117,7 @@ mod tests {
                 })
                 .collect(),
             max_body_size: None,
+            mirror_body: true,
         }
     }
 
