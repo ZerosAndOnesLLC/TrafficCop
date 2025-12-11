@@ -908,6 +908,17 @@ pub struct Server {
 
     #[serde(default)]
     pub preserve_path: bool,
+
+    /// Pre-parsed URI for performance - populated after deserialization
+    #[serde(skip)]
+    pub parsed_uri: Option<ParsedBackendUri>,
+}
+
+/// Pre-parsed backend URI components to avoid parsing on every request
+#[derive(Debug, Clone)]
+pub struct ParsedBackendUri {
+    pub scheme: String,
+    pub authority: String,
 }
 
 fn default_weight() -> u32 {

@@ -1,3 +1,4 @@
+use crate::config::ParsedBackendUri;
 use crate::router::Router;
 use crate::service::ServiceManager;
 use bytes::Bytes;
@@ -58,16 +59,17 @@ impl ProxyHandler {
         // Detect if this is a gRPC request for proper error responses
         let is_grpc = grpc::is_grpc_request(&req) || grpc::is_grpc_web_request(&req);
 
-        let host = req
-            .headers()
-            .get(HOST)
+        // Extract host - we need to clone only if we'll use it for X-Forwarded-Host
+        // but for matching we can use a reference
+        let host_header_value = req.headers().get(HOST).cloned();
+        let host = host_header_value.as_ref()
             .and_then(|h| h.to_str().ok())
-            .map(|h| h.split(':').next().unwrap_or(h))
-            .map(|s| s.to_string());
+            .map(|h| h.split(':').next().unwrap_or(h));
 
-        let path = req.uri().path().to_string();
-        let query = req.uri().query().map(|q| q.to_string());
-        let method = req.method().clone();
+        // Use references directly - no allocations
+        let path = req.uri().path();
+        let query = req.uri().query();
+        let method = req.method();
 
         debug!(
             "Request: {} {} from {} (host: {:?}, grpc: {})",
@@ -77,9 +79,9 @@ impl ProxyHandler {
         // Find matching route
         let route = match router.match_request(
             entrypoint,
-            host.as_deref(),
-            &path,
-            query.as_deref(),
+            host,
+            path,
+            query,
             Some(method.as_str()),
             req.headers(),
         ) {
@@ -87,7 +89,7 @@ impl ProxyHandler {
             None => {
                 debug!(
                     "No route matched for {} {}",
-                    host.as_deref().unwrap_or("-"),
+                    host.unwrap_or("-"),
                     path
                 );
                 return Ok(Self::error_response_maybe_grpc(
@@ -98,8 +100,9 @@ impl ProxyHandler {
             }
         };
 
-        let route_name = route.name.clone();
-        let service_name = route.service.clone();
+        // Use references to avoid cloning - only clone service_name which is needed for lookup
+        let route_name = &route.name;
+        let service_name = &route.service;
 
         debug!(
             "Matched route '{}' -> service '{}'",
@@ -107,41 +110,43 @@ impl ProxyHandler {
         );
 
         // Get service and select backend
-        let service = match services.get_service(&service_name) {
-            Some(s) => s,
-            None => {
-                error!("Service '{}' not found", service_name);
-                return Ok(Self::error_response_maybe_grpc(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Service Unavailable",
-                    is_grpc,
-                ));
-            }
-        };
-
-        let backend_url = match &service.balancer {
-            Some(balancer) => match balancer.next_server() {
-                Some(s) => s.url.clone(),
+        // Get backend info - clone parsed_uri if available, otherwise clone URL
+        let (backend_url, parsed_uri) = {
+            let service = match services.get_service(service_name) {
+                Some(s) => s,
                 None => {
-                    error!("No healthy backends for service '{}'", service_name);
+                    error!("Service '{}' not found", service_name);
                     return Ok(Self::error_response_maybe_grpc(
                         StatusCode::SERVICE_UNAVAILABLE,
-                        "No Healthy Backends",
+                        "Service Unavailable",
                         is_grpc,
                     ));
                 }
-            },
-            None => {
-                error!("Service '{}' has no load balancer configured", service_name);
-                return Ok(Self::error_response_maybe_grpc(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Service Not Configured",
-                    is_grpc,
-                ));
-            }
-        };
+            };
 
-        drop(service);
+            match &service.balancer {
+                Some(balancer) => match balancer.next_server() {
+                    Some(s) => (s.url.clone(), s.parsed_uri.clone()),
+                    None => {
+                        error!("No healthy backends for service '{}'", service_name);
+                        return Ok(Self::error_response_maybe_grpc(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "No Healthy Backends",
+                            is_grpc,
+                        ));
+                    }
+                },
+                None => {
+                    error!("Service '{}' has no load balancer configured", service_name);
+                    return Ok(Self::error_response_maybe_grpc(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "Service Not Configured",
+                        is_grpc,
+                    ));
+                }
+            }
+            // service guard is dropped here, releasing DashMap lock
+        };
 
         debug!("Selected backend: {}", backend_url);
 
@@ -151,8 +156,8 @@ impl ProxyHandler {
             return super::websocket::handle_websocket_upgrade(req, &backend_url, remote_addr).await;
         }
 
-        // Build the proxied request
-        let backend_uri = match Self::build_backend_uri(&backend_url, req.uri()) {
+        // Build the proxied request - use pre-parsed URI if available
+        let backend_uri = match Self::build_backend_uri_fast(&backend_url, req.uri(), parsed_uri.as_ref()) {
             Ok(uri) => uri,
             Err(e) => {
                 error!("Failed to build backend URI: {}", e);
@@ -166,7 +171,7 @@ impl ProxyHandler {
 
         // Create the proxied request
         let proxied_req =
-            match Self::build_proxied_request(req, backend_uri, remote_addr, host.as_deref(), is_tls, is_grpc)
+            match Self::build_proxied_request(req, backend_uri, remote_addr, host, is_tls, is_grpc)
             {
                 Ok(r) => r,
                 Err(e) => {
@@ -248,12 +253,49 @@ impl ProxyHandler {
             .map(|pq| pq.as_str())
             .unwrap_or("/");
 
-        let uri_string = format!(
-            "{}://{}{}",
-            backend_base.scheme_str().unwrap_or("http"),
-            backend_base.authority().map(|a| a.as_str()).unwrap_or(""),
-            path_and_query,
-        );
+        let scheme = backend_base.scheme_str().unwrap_or("http");
+        let authority = backend_base.authority().map(|a| a.as_str()).unwrap_or("");
+
+        // Pre-calculate capacity to avoid reallocation
+        let capacity = scheme.len() + 3 + authority.len() + path_and_query.len();
+        let mut uri_string = String::with_capacity(capacity);
+        uri_string.push_str(scheme);
+        uri_string.push_str("://");
+        uri_string.push_str(authority);
+        uri_string.push_str(path_and_query);
+
+        uri_string
+            .parse()
+            .map_err(|e| format!("Failed to build URI: {}", e))
+    }
+
+    /// Optimized URI builder that uses pre-parsed components when available
+    #[inline]
+    fn build_backend_uri_fast(
+        backend_url: &str,
+        original_uri: &Uri,
+        parsed: Option<&ParsedBackendUri>,
+    ) -> Result<Uri, String> {
+        let path_and_query = original_uri
+            .path_and_query()
+            .map(|pq| pq.as_str())
+            .unwrap_or("/");
+
+        // Use pre-parsed components if available, otherwise fall back to parsing
+        let (scheme, authority) = if let Some(p) = parsed {
+            (p.scheme.as_str(), p.authority.as_str())
+        } else {
+            // Fallback to parsing (shouldn't happen often)
+            return Self::build_backend_uri(backend_url, original_uri);
+        };
+
+        // Pre-calculate capacity to avoid reallocation
+        let capacity = scheme.len() + 3 + authority.len() + path_and_query.len();
+        let mut uri_string = String::with_capacity(capacity);
+        uri_string.push_str(scheme);
+        uri_string.push_str("://");
+        uri_string.push_str(authority);
+        uri_string.push_str(path_and_query);
 
         uri_string
             .parse()
@@ -300,19 +342,30 @@ impl ProxyHandler {
             }
         }
 
-        // Add/append X-Forwarded-For
-        let xff = match parts.headers.get("x-forwarded-for") {
-            Some(existing) => {
-                let existing_str = existing.to_str().unwrap_or("");
-                format!("{}, {}", existing_str, remote_addr.ip())
-            }
-            None => remote_addr.ip().to_string(),
-        };
+        // Add/append X-Forwarded-For - optimized to avoid format! macro
+        {
+            let ip_str = remote_addr.ip().to_string();
+            let xff = match parts.headers.get("x-forwarded-for") {
+                Some(existing) => {
+                    if let Ok(existing_str) = existing.to_str() {
+                        // Pre-allocate: existing + ", " + ip
+                        let mut s = String::with_capacity(existing_str.len() + 2 + ip_str.len());
+                        s.push_str(existing_str);
+                        s.push_str(", ");
+                        s.push_str(&ip_str);
+                        s
+                    } else {
+                        ip_str
+                    }
+                }
+                None => ip_str,
+            };
 
-        if let Ok(val) = HeaderValue::from_str(&xff) {
-            parts
-                .headers
-                .insert(HeaderName::from_static("x-forwarded-for"), val);
+            if let Ok(val) = HeaderValue::from_str(&xff) {
+                parts
+                    .headers
+                    .insert(HeaderName::from_static("x-forwarded-for"), val);
+            }
         }
 
         if let Some(host) = original_host {

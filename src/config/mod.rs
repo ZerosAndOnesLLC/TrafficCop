@@ -14,12 +14,31 @@ impl Config {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {:?}", path))?;
 
-        let config: Config = serde_yaml::from_str(&content)
+        let mut config: Config = serde_yaml::from_str(&content)
             .with_context(|| "Failed to parse config file")?;
 
         config.validate()?;
+        config.pre_parse_uris();
 
         Ok(config)
+    }
+
+    /// Pre-parse backend URIs at config load time for performance
+    fn pre_parse_uris(&mut self) {
+        if let Some(http) = &mut self.http {
+            for service in http.services.values_mut() {
+                if let Some(lb) = &mut service.load_balancer {
+                    for server in &mut lb.servers {
+                        if let Ok(uri) = server.url.parse::<hyper::Uri>() {
+                            server.parsed_uri = Some(ParsedBackendUri {
+                                scheme: uri.scheme_str().unwrap_or("http").to_string(),
+                                authority: uri.authority().map(|a| a.to_string()).unwrap_or_default(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Get routers from the http config
