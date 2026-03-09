@@ -98,6 +98,7 @@ mod tests {
                 url: format!("http://server{}:8080", i),
                 weight: 1,
                 preserve_path: false,
+                parsed_uri: None,
             })
             .collect()
     }

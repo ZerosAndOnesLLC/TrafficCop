@@ -106,11 +106,13 @@ mod tests {
                 url: "http://server0:8080".to_string(),
                 weight: 1,
                 preserve_path: false,
+                parsed_uri: None,
             },
             Server {
                 url: "http://server1:8080".to_string(),
                 weight: 1,
                 preserve_path: false,
+                parsed_uri: None,
             },
         ]
     }
