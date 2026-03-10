@@ -69,3 +69,18 @@ jobs:
           files: |
             *.tar.gz
             *.sha256
+
+      - name: Clean up old releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          KEEP=10
+          releases=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName')
+          count=0
+          for tag in $releases; do
+            count=$((count + 1))
+            if [ "$count" -gt "$KEEP" ]; then
+              echo "Deleting release and tag: $tag"
+              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+            fi
+          done
