@@ -30,10 +30,9 @@ impl Config {
                 if let Some(lb) = &mut service.load_balancer {
                     for server in &mut lb.servers {
                         if let Ok(uri) = server.url.parse::<hyper::Uri>() {
-                            server.parsed_uri = Some(ParsedBackendUri {
-                                scheme: uri.scheme_str().unwrap_or("http").to_string(),
-                                authority: uri.authority().map(|a| a.to_string()).unwrap_or_default(),
-                            });
+                            if let (Some(scheme), Some(authority)) = (uri.scheme().cloned(), uri.authority().cloned()) {
+                                server.parsed_uri = Some(ParsedBackendUri { scheme, authority });
+                            }
                         }
                     }
                 }

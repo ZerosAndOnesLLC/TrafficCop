@@ -269,36 +269,28 @@ impl ProxyHandler {
             .map_err(|e| format!("Failed to build URI: {}", e))
     }
 
-    /// Optimized URI builder that uses pre-parsed components when available
+    /// Optimized URI builder that uses pre-parsed typed components when available.
+    /// Uses Uri::builder with typed Scheme/Authority to avoid String allocation and re-parse.
     #[inline]
     fn build_backend_uri_fast(
         backend_url: &str,
         original_uri: &Uri,
         parsed: Option<&ParsedBackendUri>,
     ) -> Result<Uri, String> {
-        let path_and_query = original_uri
-            .path_and_query()
-            .map(|pq| pq.as_str())
-            .unwrap_or("/");
-
-        // Use pre-parsed components if available, otherwise fall back to parsing
-        let (scheme, authority) = if let Some(p) = parsed {
-            (p.scheme.as_str(), p.authority.as_str())
-        } else {
-            // Fallback to parsing (shouldn't happen often)
+        let Some(parsed) = parsed else {
             return Self::build_backend_uri(backend_url, original_uri);
         };
 
-        // Pre-calculate capacity to avoid reallocation
-        let capacity = scheme.len() + 3 + authority.len() + path_and_query.len();
-        let mut uri_string = String::with_capacity(capacity);
-        uri_string.push_str(scheme);
-        uri_string.push_str("://");
-        uri_string.push_str(authority);
-        uri_string.push_str(path_and_query);
+        let path_and_query = original_uri
+            .path_and_query()
+            .cloned()
+            .unwrap_or_else(|| hyper::http::uri::PathAndQuery::from_static("/"));
 
-        uri_string
-            .parse()
+        Uri::builder()
+            .scheme(parsed.scheme.clone())
+            .authority(parsed.authority.clone())
+            .path_and_query(path_and_query)
+            .build()
             .map_err(|e| format!("Failed to build URI: {}", e))
     }
 
