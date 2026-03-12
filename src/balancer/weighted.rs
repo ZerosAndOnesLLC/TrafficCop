@@ -124,18 +124,21 @@ mod tests {
                 weight: 5,
                 preserve_path: false,
                 parsed_uri: None,
+                url_arc: None,
             },
             Server {
                 url: "http://server1:8080".to_string(),
                 weight: 3,
                 preserve_path: false,
                 parsed_uri: None,
+                url_arc: None,
             },
             Server {
                 url: "http://server2:8080".to_string(),
                 weight: 2,
                 preserve_path: false,
                 parsed_uri: None,
+                url_arc: None,
             },
         ]
     }
