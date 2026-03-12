@@ -2,13 +2,10 @@ use crate::tcp::{TcpRouter, TcpServiceManager};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tracing::{debug, error, warn};
-
-/// Buffer size for TCP proxying
-const BUFFER_SIZE: usize = 64 * 1024; // 64KB
 
 /// Timeout for initial connection to backend
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -308,26 +305,15 @@ impl TcpProxy {
     }
 }
 
-/// Copy data from reader to writer
+/// Copy data from reader to writer using tokio's optimized internal buffer
 async fn copy_stream<R, W>(mut reader: R, mut writer: W) -> std::io::Result<u64>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut buf = vec![0u8; BUFFER_SIZE];
-    let mut total = 0u64;
-
-    loop {
-        let n = reader.read(&mut buf).await?;
-        if n == 0 {
-            break;
-        }
-        writer.write_all(&buf[..n]).await?;
-        total += n as u64;
-    }
-
+    let bytes = tokio::io::copy(&mut reader, &mut writer).await?;
     let _ = writer.shutdown().await;
-    Ok(total)
+    Ok(bytes)
 }
 
 /// Copy data from reader to writer, sending initial data first
@@ -341,24 +327,11 @@ where
     W: AsyncWrite + Unpin,
 {
     let mut total = 0u64;
-
-    // Write initial data first
     if !initial_data.is_empty() {
         writer.write_all(&initial_data).await?;
         total += initial_data.len() as u64;
     }
-
-    // Then copy the rest
-    let mut buf = vec![0u8; BUFFER_SIZE];
-    loop {
-        let n = reader.read(&mut buf).await?;
-        if n == 0 {
-            break;
-        }
-        writer.write_all(&buf[..n]).await?;
-        total += n as u64;
-    }
-
+    total += tokio::io::copy(&mut reader, &mut writer).await?;
     let _ = writer.shutdown().await;
     Ok(total)
 }
