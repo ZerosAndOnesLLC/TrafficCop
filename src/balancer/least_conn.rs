@@ -99,6 +99,7 @@ mod tests {
                 weight: 1,
                 preserve_path: false,
                 parsed_uri: None,
+                url_arc: None,
             })
             .collect()
     }

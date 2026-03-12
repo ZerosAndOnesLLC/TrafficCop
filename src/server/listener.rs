@@ -16,7 +16,7 @@ use tokio_rustls::TlsAcceptor as TokioTlsAcceptor;
 use tracing::{debug, error, info};
 
 pub struct Listener {
-    name: String,
+    name: Arc<str>,
     entrypoint: EntryPoint,
     state: Arc<SharedState>,
     proxy: Arc<ProxyHandler>,
@@ -34,7 +34,7 @@ impl Listener {
         let tls_acceptor = Self::build_tls_acceptor(&name, &entrypoint, &state);
 
         Self {
-            name,
+            name: Arc::from(name),
             entrypoint,
             state,
             proxy,
@@ -123,7 +123,7 @@ impl Listener {
 
             let state = Arc::clone(&self.state);
             let proxy = Arc::clone(&self.proxy);
-            let entrypoint_name = self.name.clone();
+            let entrypoint_name = Arc::clone(&self.name);
             let tls_acceptor = self.tls_acceptor.clone();
             let connection_is_tls = tls_acceptor.is_some();
 
@@ -142,7 +142,7 @@ impl Listener {
                             Self::serve_connection(
                                 io,
                                 remote_addr,
-                                &entrypoint_name,
+                                Arc::clone(&entrypoint_name),
                                 Arc::clone(&state),
                                 proxy,
                                 connection_is_tls,
@@ -159,7 +159,7 @@ impl Listener {
                     Self::serve_connection(
                         io,
                         remote_addr,
-                        &entrypoint_name,
+                        entrypoint_name,
                         Arc::clone(&state),
                         proxy,
                         connection_is_tls,
@@ -176,19 +176,17 @@ impl Listener {
     async fn serve_connection<I>(
         io: I,
         remote_addr: SocketAddr,
-        entrypoint_name: &str,
+        entrypoint_name: Arc<str>,
         state: Arc<SharedState>,
         proxy: Arc<ProxyHandler>,
         is_tls: bool,
     ) where
         I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
     {
-        let ep_name = entrypoint_name.to_string();
-
         let service = service_fn(move |req: Request<hyper::body::Incoming>| {
             let state = Arc::clone(&state);
             let proxy = Arc::clone(&proxy);
-            let ep = ep_name.clone();
+            let ep = Arc::clone(&entrypoint_name);
 
             async move {
                 // Check for ACME HTTP-01 challenges first (on non-TLS connections)

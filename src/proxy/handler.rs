@@ -9,6 +9,7 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use tracing::{debug, error, warn};
@@ -126,7 +127,10 @@ impl ProxyHandler {
 
             match &service.balancer {
                 Some(balancer) => match balancer.next_server() {
-                    Some(s) => (s.url.clone(), s.parsed_uri.clone()),
+                    Some(s) => {
+                        let url = s.url_arc.as_ref().map(Arc::clone).unwrap_or_else(|| Arc::from(s.url.as_str()));
+                        (url, s.parsed_uri.clone())
+                    }
                     None => {
                         error!("No healthy backends for service '{}'", service_name);
                         return Ok(Self::error_response_maybe_grpc(

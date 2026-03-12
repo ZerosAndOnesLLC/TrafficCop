@@ -912,6 +912,10 @@ pub struct Server {
     /// Pre-parsed URI for performance - populated after deserialization
     #[serde(skip)]
     pub parsed_uri: Option<ParsedBackendUri>,
+
+    /// Arc-wrapped URL for cheap cloning in hot path (~1ns vs ~50-200ns for String)
+    #[serde(skip)]
+    pub url_arc: Option<std::sync::Arc<str>>,
 }
 
 /// Pre-parsed backend URI components to avoid parsing on every request

@@ -353,12 +353,14 @@ mod tests {
                 weight: 1,
                 preserve_path: false,
                 parsed_uri: None,
+                url_arc: None,
             },
             Server {
                 url: "http://server2:8080".to_string(),
                 weight: 1,
                 preserve_path: false,
                 parsed_uri: None,
+                url_arc: None,
             },
         ])
     }
