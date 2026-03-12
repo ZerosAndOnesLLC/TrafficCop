@@ -1,15 +1,12 @@
 use crate::balancer::LoadBalancer;
 use crate::config::{Config, LoadBalancerService, Service};
 use crate::health::{HealthChecker, HealthStatus};
-use crate::pool::ConnectionPool;
 use dashmap::DashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::info;
 
 pub struct ServiceManager {
     services: DashMap<String, ServiceState>,
-    pool: Arc<ConnectionPool>,
 }
 
 pub struct ServiceState {
@@ -20,7 +17,6 @@ pub struct ServiceState {
 
 impl ServiceManager {
     pub fn new(config: &Config) -> Self {
-        let pool = Arc::new(ConnectionPool::new(100, Duration::from_secs(90)));
         let services = DashMap::new();
 
         for (name, service_config) in config.services() {
@@ -61,7 +57,7 @@ impl ServiceManager {
             info!("Registered service '{}' with {} servers", name, server_count);
         }
 
-        Self { services, pool }
+        Self { services }
     }
 
     pub fn get_service(
@@ -69,10 +65,6 @@ impl ServiceManager {
         name: &str,
     ) -> Option<dashmap::mapref::one::Ref<'_, String, ServiceState>> {
         self.services.get(name)
-    }
-
-    pub fn get_pool(&self) -> &Arc<ConnectionPool> {
-        &self.pool
     }
 
     pub fn start_health_checks(&self) {

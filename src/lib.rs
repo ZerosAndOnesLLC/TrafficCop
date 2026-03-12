@@ -5,7 +5,6 @@ pub mod config;
 pub mod health;
 pub mod metrics;
 pub mod middleware;
-pub mod pool;
 pub mod proxy;
 pub mod router;
 pub mod server;
