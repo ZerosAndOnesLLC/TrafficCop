@@ -1,4 +1,5 @@
 use crate::config::EntryPoint;
+use crate::middleware::RequestContext;
 use crate::proxy::ProxyHandler;
 use crate::server::SharedState;
 use crate::tls::{try_handle_challenge, TlsAcceptor};
@@ -183,7 +184,7 @@ impl Listener {
     ) where
         I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
     {
-        let service = service_fn(move |req: Request<hyper::body::Incoming>| {
+        let service = service_fn(move |mut req: Request<hyper::body::Incoming>| {
             let state = Arc::clone(&state);
             let proxy = Arc::clone(&proxy);
             let ep = Arc::clone(&entrypoint_name);
@@ -205,12 +206,19 @@ impl Listener {
                     }
                 }
 
-                // Load current router and services (supports hot reload)
+                // Inject request context for middleware (remote_addr, is_tls)
+                req.extensions_mut().insert(RequestContext {
+                    remote_addr,
+                    is_tls,
+                });
+
+                // Load current router, services, and middlewares (supports hot reload)
                 let router = state.router.load();
                 let services = state.services.load();
+                let middlewares = state.middlewares.load();
 
                 proxy
-                    .handle(req, remote_addr, &ep, &router, &services, is_tls)
+                    .handle(req, remote_addr, &ep, &router, &services, &middlewares, is_tls)
                     .await
             }
         });
