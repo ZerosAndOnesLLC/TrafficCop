@@ -6,6 +6,8 @@ use std::net::IpAddr;
 pub struct IpAllowListMiddleware {
     source_range: Vec<IpNetwork>,
     ip_strategy: Option<IpStrategy>,
+    /// Pre-parsed excluded IP networks (avoids parse_network() per request)
+    excluded_networks: Vec<IpNetwork>,
     reject_status_code: u16,
 }
 
@@ -17,9 +19,16 @@ impl IpAllowListMiddleware {
             .filter_map(|s| parse_network(s))
             .collect();
 
+        let excluded_networks = config
+            .ip_strategy
+            .as_ref()
+            .map(|s| s.excluded_ips.iter().filter_map(|e| parse_network(e)).collect())
+            .unwrap_or_default();
+
         Self {
             source_range,
             ip_strategy: config.ip_strategy.clone(),
+            excluded_networks,
             reject_status_code: config.reject_status_code.unwrap_or(403),
         }
     }
@@ -52,20 +61,10 @@ impl IpAllowListMiddleware {
                 let ips: Vec<&str> = xff.split(',').map(|s| s.trim()).collect();
                 let depth = strategy.depth as usize;
 
-                // Depth 0 means use the rightmost IP (closest proxy)
-                // Depth 1 means skip one from right, etc.
                 if depth < ips.len() {
                     let idx = ips.len() - 1 - depth;
                     if let Ok(ip) = ips[idx].parse::<IpAddr>() {
-                        // Check if IP should be excluded
-                        let should_exclude = strategy.excluded_ips.iter().any(|excluded| {
-                            if let Some(network) = parse_network(excluded) {
-                                network.contains(ip)
-                            } else {
-                                false
-                            }
-                        });
-
+                        let should_exclude = self.excluded_networks.iter().any(|net| net.contains(ip));
                         if !should_exclude {
                             return ip;
                         }
@@ -87,6 +86,8 @@ impl IpAllowListMiddleware {
 pub struct IpDenyListMiddleware {
     source_range: Vec<IpNetwork>,
     ip_strategy: Option<IpStrategy>,
+    /// Pre-parsed excluded IP networks (avoids parse_network() per request)
+    excluded_networks: Vec<IpNetwork>,
 }
 
 impl IpDenyListMiddleware {
@@ -97,9 +98,16 @@ impl IpDenyListMiddleware {
             .filter_map(|s| parse_network(s))
             .collect();
 
+        let excluded_networks = config
+            .ip_strategy
+            .as_ref()
+            .map(|s| s.excluded_ips.iter().filter_map(|e| parse_network(e)).collect())
+            .unwrap_or_default();
+
         Self {
             source_range,
             ip_strategy: config.ip_strategy.clone(),
+            excluded_networks,
         }
     }
 
@@ -125,14 +133,7 @@ impl IpDenyListMiddleware {
                 if depth < ips.len() {
                     let idx = ips.len() - 1 - depth;
                     if let Ok(ip) = ips[idx].parse::<IpAddr>() {
-                        let should_exclude = strategy.excluded_ips.iter().any(|excluded| {
-                            if let Some(network) = parse_network(excluded) {
-                                network.contains(ip)
-                            } else {
-                                false
-                            }
-                        });
-
+                        let should_exclude = self.excluded_networks.iter().any(|net| net.contains(ip));
                         if !should_exclude {
                             return ip;
                         }

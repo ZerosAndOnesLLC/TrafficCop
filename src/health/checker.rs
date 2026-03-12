@@ -16,6 +16,10 @@ pub struct HealthChecker {
     server_url: String,
     status: Arc<HealthStatus>,
     client: Client<HttpConnector, http_body_util::Empty<Bytes>>,
+    /// Pre-computed check URI to avoid format!() + parse per tick
+    check_uri: hyper::Uri,
+    /// Pre-parsed HTTP method to avoid parsing per tick
+    check_method: Method,
 }
 
 impl HealthChecker {
@@ -26,11 +30,30 @@ impl HealthChecker {
             .pool_max_idle_per_host(2)
             .build(connector);
 
+        let scheme = config.scheme.as_deref().unwrap_or("http");
+        let check_url = format!(
+            "{}://{}{}",
+            scheme,
+            server_url.trim_start_matches("http://").trim_start_matches("https://").trim_end_matches('/'),
+            config.path
+        );
+        let check_uri: hyper::Uri = check_url.parse().unwrap_or_else(|_| {
+            format!("http://{}{}", server_url, config.path).parse().unwrap()
+        });
+
+        let check_method = config
+            .method
+            .as_ref()
+            .map(|m| m.parse().unwrap_or(Method::GET))
+            .unwrap_or(Method::GET);
+
         Self {
             config,
             server_url,
             status,
             client,
+            check_uri,
+            check_method,
         }
     }
 
@@ -84,28 +107,9 @@ impl HealthChecker {
     }
 
     async fn perform_http_check(&self) -> Result<(), String> {
-        let scheme = self.config.scheme.as_deref().unwrap_or("http");
-        let check_url = format!(
-            "{}://{}{}",
-            scheme,
-            self.server_url.trim_start_matches("http://").trim_start_matches("https://").trim_end_matches('/'),
-            self.config.path
-        );
-
-        let uri: hyper::Uri = check_url
-            .parse()
-            .map_err(|e| format!("Invalid URL: {}", e))?;
-
-        let method = self
-            .config
-            .method
-            .as_ref()
-            .map(|m| m.parse().unwrap_or(Method::GET))
-            .unwrap_or(Method::GET);
-
         let req = Request::builder()
-            .method(method)
-            .uri(uri)
+            .method(self.check_method.clone())
+            .uri(self.check_uri.clone())
             .header("user-agent", "traffic-management-health-checker/1.0")
             .body(http_body_util::Empty::<Bytes>::new())
             .map_err(|e| format!("Failed to build request: {}", e))?;
