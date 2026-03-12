@@ -29,17 +29,18 @@ impl CompressMiddleware {
     pub fn select_algorithm(headers: &HeaderMap) -> CompressionAlgorithm {
         let accept = match headers.get(ACCEPT_ENCODING) {
             Some(v) => match v.to_str() {
-                Ok(s) => s.to_lowercase(),
+                Ok(s) => s,
                 Err(_) => return CompressionAlgorithm::None,
             },
             None => return CompressionAlgorithm::None,
         };
 
+        // Case-insensitive check without allocation
         // Prefer brotli over gzip
-        if accept.contains("br") {
+        if accept.as_bytes().windows(2).any(|w| w.eq_ignore_ascii_case(b"br")) {
             return CompressionAlgorithm::Brotli;
         }
-        if accept.contains("gzip") {
+        if accept.as_bytes().windows(4).any(|w| w.eq_ignore_ascii_case(b"gzip")) {
             return CompressionAlgorithm::Gzip;
         }
 
@@ -81,15 +82,15 @@ impl CompressMiddleware {
         }
     }
 
-    /// Compress bytes with gzip
-    pub fn compress_gzip(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+    /// Compress bytes with gzip (synchronous, for use inside spawn_blocking)
+    fn compress_gzip_sync(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
         encoder.write_all(data)?;
         encoder.finish()
     }
 
-    /// Compress bytes with brotli
-    pub fn compress_brotli(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+    /// Compress bytes with brotli (synchronous, for use inside spawn_blocking)
+    fn compress_brotli_sync(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
         let mut output = Vec::new();
         let mut writer = brotli::CompressorWriter::new(&mut output, 4096, 4, 22);
         writer.write_all(data)?;
@@ -97,12 +98,26 @@ impl CompressMiddleware {
         Ok(output)
     }
 
-    /// Compress data with the specified algorithm
-    pub fn compress(data: &[u8], algorithm: CompressionAlgorithm) -> Result<Vec<u8>, std::io::Error> {
+    /// Compress bytes with gzip (non-blocking)
+    pub async fn compress_gzip(data: Vec<u8>) -> Result<Vec<u8>, std::io::Error> {
+        tokio::task::spawn_blocking(move || Self::compress_gzip_sync(&data))
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+    }
+
+    /// Compress bytes with brotli (non-blocking)
+    pub async fn compress_brotli(data: Vec<u8>) -> Result<Vec<u8>, std::io::Error> {
+        tokio::task::spawn_blocking(move || Self::compress_brotli_sync(&data))
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+    }
+
+    /// Compress data with the specified algorithm (non-blocking)
+    pub async fn compress(data: Vec<u8>, algorithm: CompressionAlgorithm) -> Result<Vec<u8>, std::io::Error> {
         match algorithm {
-            CompressionAlgorithm::Gzip => Self::compress_gzip(data),
-            CompressionAlgorithm::Brotli => Self::compress_brotli(data),
-            CompressionAlgorithm::None => Ok(data.to_vec()),
+            CompressionAlgorithm::Gzip => Self::compress_gzip(data).await,
+            CompressionAlgorithm::Brotli => Self::compress_brotli(data).await,
+            CompressionAlgorithm::None => Ok(data),
         }
     }
 
@@ -153,16 +168,15 @@ mod tests {
 
     #[test]
     fn test_compress_gzip() {
-        // Need larger data for gzip to actually compress (small data has overhead)
         let data = "Hello, World! This is some test data that should compress well. ".repeat(100);
-        let compressed = CompressMiddleware::compress_gzip(data.as_bytes()).unwrap();
+        let compressed = CompressMiddleware::compress_gzip_sync(data.as_bytes()).unwrap();
         assert!(compressed.len() < data.len());
     }
 
     #[test]
     fn test_compress_brotli() {
         let data = "Hello, World! This is some test data that should compress well. ".repeat(100);
-        let compressed = CompressMiddleware::compress_brotli(data.as_bytes()).unwrap();
+        let compressed = CompressMiddleware::compress_brotli_sync(data.as_bytes()).unwrap();
         assert!(compressed.len() < data.len());
     }
 
