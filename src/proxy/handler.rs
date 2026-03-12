@@ -28,6 +28,7 @@ fn hop_by_hop_headers() -> &'static [HeaderName] {
 
 pub struct ProxyHandler {
     client: Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
+    h2_client: Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
 }
 
 impl ProxyHandler {
@@ -38,13 +39,26 @@ impl ProxyHandler {
         connector.enforce_http(false);
 
         let client = Client::builder(TokioExecutor::new())
-            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .pool_idle_timeout(Duration::from_secs(90))
             .pool_max_idle_per_host(256)
             .retry_canceled_requests(true)
             .set_host(true)
             .build(connector);
 
-        Self { client }
+        let mut h2_connector = HttpConnector::new();
+        h2_connector.set_nodelay(true);
+        h2_connector.set_reuse_address(true);
+        h2_connector.enforce_http(false);
+
+        let h2_client = Client::builder(TokioExecutor::new())
+            .pool_idle_timeout(Duration::from_secs(90))
+            .pool_max_idle_per_host(256)
+            .retry_canceled_requests(true)
+            .set_host(true)
+            .http2_only(true)
+            .build(h2_connector);
+
+        Self { client, h2_client }
     }
 
     pub async fn handle(
@@ -128,6 +142,7 @@ impl ProxyHandler {
 
             let fwd = ForwardEndpoint {
                 client: &self.client,
+                h2_client: &self.h2_client,
                 remote_addr,
                 service_name: service_name.clone(),
                 services,
@@ -160,6 +175,7 @@ impl ProxyHandler {
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
         Self::forward_to_backend_inner(
             &self.client,
+            &self.h2_client,
             req,
             remote_addr,
             service_name,
@@ -175,6 +191,7 @@ impl ProxyHandler {
     /// Inner forwarding logic shared between direct and middleware-chained paths
     async fn forward_to_backend_inner(
         client: &Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
+        h2_client: &Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
         req: Request<Incoming>,
         remote_addr: SocketAddr,
         service_name: &str,
@@ -226,15 +243,24 @@ impl ProxyHandler {
 
         debug!("Selected backend: {}", backend_url);
 
-        // Check for WebSocket upgrade
-        if super::websocket::is_websocket_upgrade(&req) {
+        // Check if backend uses h2c (HTTP/2 cleartext) scheme
+        let use_h2 = is_grpc || Self::is_h2c_backend(parsed_uri.as_ref(), &backend_url);
+
+        // Check for WebSocket upgrade (not applicable for HTTP/2 backends)
+        if !use_h2 && super::websocket::is_websocket_upgrade(&req) {
             debug!("Handling WebSocket upgrade to {}", backend_url);
             return super::websocket::handle_websocket_upgrade(req, &backend_url, remote_addr).await;
         }
 
-        // Build the proxied request
+        // Build the proxied request — rewrite h2c:// to http:// for the actual connection
         let backend_uri = match Self::build_backend_uri_fast(&backend_url, req.uri(), parsed_uri.as_ref()) {
-            Ok(uri) => uri,
+            Ok(uri) => {
+                if use_h2 {
+                    Self::rewrite_h2c_scheme(uri)
+                } else {
+                    uri
+                }
+            }
             Err(e) => {
                 error!("Failed to build backend URI: {}", e);
                 return Ok(Self::error_response_maybe_grpc(
@@ -259,13 +285,21 @@ impl ProxyHandler {
                 }
             };
 
+        // Select client: HTTP/2 for gRPC and h2c backends, HTTP/1.1 otherwise
+        let selected_client = if use_h2 {
+            debug!("Using HTTP/2 client for backend: {}", backend_url);
+            h2_client
+        } else {
+            client
+        };
+
         // Forward with timeout
         let request_timeout = if is_grpc {
             Duration::from_secs(300)
         } else {
             Duration::from_secs(30)
         };
-        let backend_future = client.request(proxied_req);
+        let backend_future = selected_client.request(proxied_req);
 
         match timeout(request_timeout, backend_future).await {
             Ok(Ok(response)) => {
@@ -364,6 +398,28 @@ impl ProxyHandler {
             .path_and_query(path_and_query)
             .build()
             .map_err(|e| format!("Failed to build URI: {}", e))
+    }
+
+    /// Check if the backend URL uses h2c:// scheme (HTTP/2 cleartext)
+    #[inline]
+    fn is_h2c_backend(parsed: Option<&ParsedBackendUri>, raw_url: &str) -> bool {
+        if let Some(p) = parsed {
+            p.scheme.as_str() == "h2c"
+        } else {
+            raw_url.starts_with("h2c://")
+        }
+    }
+
+    /// Rewrite h2c:// scheme to http:// so the HttpConnector can connect
+    #[inline]
+    fn rewrite_h2c_scheme(uri: Uri) -> Uri {
+        if uri.scheme_str() == Some("h2c") {
+            let mut parts = uri.into_parts();
+            parts.scheme = Some("http".parse().unwrap());
+            Uri::from_parts(parts).unwrap_or_else(|_| "/".parse().unwrap())
+        } else {
+            uri
+        }
     }
 
     fn build_proxied_request(
@@ -518,6 +574,7 @@ impl Middleware for ArcMiddleware {
 /// Terminal endpoint for the middleware chain — forwards the request to the backend
 struct ForwardEndpoint<'a> {
     client: &'a Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
+    h2_client: &'a Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
     remote_addr: SocketAddr,
     service_name: String,
     services: &'a ServiceManager,
@@ -531,6 +588,7 @@ impl Endpoint for ForwardEndpoint<'_> {
     fn call(&self, req: Request<Incoming>) -> BoxFuture<'_, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(ProxyHandler::forward_to_backend_inner(
             self.client,
+            self.h2_client,
             req,
             self.remote_addr,
             &self.service_name,
