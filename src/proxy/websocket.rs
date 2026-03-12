@@ -11,21 +11,22 @@ use tracing::{debug, error};
 /// Check if request is a WebSocket upgrade request
 #[inline]
 pub fn is_websocket_upgrade(req: &Request<Incoming>) -> bool {
-    let dominated = req
+    let has_upgrade = req
         .headers()
         .get(UPGRADE)
         .and_then(|v| v.to_str().ok())
-        .map(|v| v.to_lowercase().contains("websocket"))
-        .unwrap_or(false);
+        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
 
-    let connection = req
+    let has_connection = req
         .headers()
         .get(CONNECTION)
         .and_then(|v| v.to_str().ok())
-        .map(|v| v.to_lowercase().contains("upgrade"))
-        .unwrap_or(false);
+        .is_some_and(|v| {
+            v.split(',')
+                .any(|part| part.trim().eq_ignore_ascii_case("upgrade"))
+        });
 
-    dominated && connection
+    has_upgrade && has_connection
 }
 
 /// Handle WebSocket upgrade and proxy the connection
