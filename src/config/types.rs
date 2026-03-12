@@ -914,11 +914,12 @@ pub struct Server {
     pub parsed_uri: Option<ParsedBackendUri>,
 }
 
-/// Pre-parsed backend URI components to avoid parsing on every request
+/// Pre-parsed backend URI components using typed parts to avoid string
+/// re-construction and re-parsing on every request
 #[derive(Debug, Clone)]
 pub struct ParsedBackendUri {
-    pub scheme: String,
-    pub authority: String,
+    pub scheme: hyper::http::uri::Scheme,
+    pub authority: hyper::http::uri::Authority,
 }
 
 fn default_weight() -> u32 {
