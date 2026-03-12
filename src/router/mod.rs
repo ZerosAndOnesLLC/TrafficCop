@@ -5,9 +5,17 @@ pub use matcher::RouteMatcher;
 pub use rule::{Rule, RuleParser};
 
 use crate::config::Config;
+use std::collections::HashMap;
 
 pub struct Router {
     routes: Vec<Route>,
+    /// Pre-computed candidate route indices per entrypoint (sorted by priority).
+    /// Includes both entrypoint-specific and catch-all routes.
+    candidates_by_ep: HashMap<String, Vec<usize>>,
+    /// Routes with no entrypoint restriction, sorted by priority.
+    catch_all: Vec<usize>,
+    /// Host -> route indices for O(1) host lookup (routes with top-level Host rule).
+    host_index: HashMap<String, Vec<usize>>,
 }
 
 pub struct Route {
@@ -17,6 +25,8 @@ pub struct Route {
     pub service: String,
     pub middlewares: Vec<String>,
     pub priority: i32,
+    /// Whether this route has been indexed by host (skip in non-host scan)
+    host_indexed: bool,
 }
 
 impl Router {
@@ -33,6 +43,7 @@ impl Router {
                         service: router_config.service.clone(),
                         middlewares: router_config.middlewares.clone(),
                         priority: router_config.priority,
+                        host_indexed: false,
                     }),
                     Err(e) => {
                         tracing::error!("Failed to parse rule for router '{}': {}", name, e);
@@ -45,7 +56,63 @@ impl Router {
         // Sort by priority (higher first)
         routes.sort_by(|a, b| b.priority.cmp(&a.priority));
 
-        Self { routes }
+        // Build host index
+        let mut host_index: HashMap<String, Vec<usize>> = HashMap::new();
+        for (idx, route) in routes.iter_mut().enumerate() {
+            let hosts = route.matcher.extract_hosts();
+            if !hosts.is_empty() {
+                route.host_indexed = true;
+                for host in hosts {
+                    host_index
+                        .entry(host.to_ascii_lowercase())
+                        .or_default()
+                        .push(idx);
+                }
+            }
+        }
+
+        // Build entrypoint index
+        let mut candidates_by_ep: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut catch_all: Vec<usize> = Vec::new();
+        let mut all_eps: std::collections::HashSet<&str> = std::collections::HashSet::new();
+
+        for (idx, route) in routes.iter().enumerate() {
+            if route.entrypoints.is_empty() {
+                catch_all.push(idx);
+            } else {
+                for ep in &route.entrypoints {
+                    all_eps.insert(ep.as_str());
+                    candidates_by_ep.entry(ep.clone()).or_default().push(idx);
+                }
+            }
+        }
+
+        // Pre-merge catch-all routes into each entrypoint's candidate list
+        for candidates in candidates_by_ep.values_mut() {
+            let mut merged = Vec::with_capacity(candidates.len() + catch_all.len());
+            let mut i = 0;
+            let mut j = 0;
+            // Merge two sorted-by-priority lists
+            while i < candidates.len() && j < catch_all.len() {
+                if routes[candidates[i]].priority >= routes[catch_all[j]].priority {
+                    merged.push(candidates[i]);
+                    i += 1;
+                } else {
+                    merged.push(catch_all[j]);
+                    j += 1;
+                }
+            }
+            merged.extend_from_slice(&candidates[i..]);
+            merged.extend_from_slice(&catch_all[j..]);
+            *candidates = merged;
+        }
+
+        Self {
+            routes,
+            candidates_by_ep,
+            catch_all,
+            host_index,
+        }
     }
 
     pub fn match_request(
@@ -57,17 +124,40 @@ impl Router {
         method: Option<&str>,
         headers: &hyper::HeaderMap,
     ) -> Option<&Route> {
-        self.routes.iter().find(|route| {
-            // Check entrypoint matches (empty means all entrypoints)
-            let ep_match = route.entrypoints.is_empty()
-                || route.entrypoints.iter().any(|ep| ep == entrypoint);
+        // Get candidate indices for this entrypoint
+        let candidates = self
+            .candidates_by_ep
+            .get(entrypoint)
+            .map(|v| v.as_slice())
+            .unwrap_or(&self.catch_all);
 
-            if !ep_match {
-                return false;
+        // Fast path: if host is provided, check host-indexed routes first
+        if let Some(h) = host {
+            let host_lower = h.to_ascii_lowercase();
+            if let Some(host_candidates) = self.host_index.get(&host_lower) {
+                // Check host-indexed routes that also match this entrypoint
+                for &idx in host_candidates {
+                    let route = &self.routes[idx];
+                    let ep_match = route.entrypoints.is_empty()
+                        || route.entrypoints.iter().any(|ep| ep == entrypoint);
+                    if ep_match && route.matcher.matches(Some(h), path, query, method, headers) {
+                        return Some(route);
+                    }
+                }
             }
+        }
 
-            // Check rule matches
-            route.matcher.matches(host, path, query, method, headers)
-        })
+        // Scan non-host-indexed routes for this entrypoint
+        for &idx in candidates {
+            let route = &self.routes[idx];
+            if route.host_indexed {
+                continue; // Already checked via host index
+            }
+            if route.matcher.matches(host, path, query, method, headers) {
+                return Some(route);
+            }
+        }
+
+        None
     }
 }

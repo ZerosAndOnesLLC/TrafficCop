@@ -22,4 +22,9 @@ impl RouteMatcher {
     ) -> bool {
         self.rule.matches(host, path, query, method, headers)
     }
+
+    /// Extract host names from the rule for indexing
+    pub fn extract_hosts(&self) -> Vec<&str> {
+        self.rule.extract_hosts()
+    }
 }

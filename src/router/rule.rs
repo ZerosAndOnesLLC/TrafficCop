@@ -132,6 +132,23 @@ impl Rule {
     }
 }
 
+impl Rule {
+    /// Extract host names from the rule for indexing purposes.
+    /// Returns hosts only when the rule requires a specific host (Host or And containing Host).
+    /// Returns empty for Or/Not/non-host rules where we can't narrow by host.
+    pub fn extract_hosts(&self) -> Vec<&str> {
+        match self {
+            Rule::Host(h) => vec![h.as_str()],
+            Rule::And(a, b) => {
+                let mut hosts = a.extract_hosts();
+                hosts.extend(b.extract_hosts());
+                hosts
+            }
+            _ => vec![],
+        }
+    }
+}
+
 pub struct RuleParser;
 
 impl RuleParser {
