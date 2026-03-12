@@ -51,24 +51,28 @@ impl TokenBucket {
     #[inline]
     fn try_acquire(&self, tokens_per_sec: u64, burst: u64) -> bool {
         let now_nanos = self.epoch.elapsed().as_nanos() as u64;
-        let last = self.last_update.swap(now_nanos, Ordering::Relaxed);
-
-        // Calculate tokens to add based on time elapsed
-        let elapsed_millis = (now_nanos.saturating_sub(last)) / 1_000_000;
-        let tokens_to_add = (elapsed_millis * tokens_per_sec) / 1000;
-
         let max_tokens = burst * 1000;
 
-        // Add tokens (capped at burst)
-        let current = self.tokens.load(Ordering::Relaxed);
-        let new_tokens = (current + tokens_to_add).min(max_tokens);
+        // CAS loop with retry limit to prevent livelock
+        for _ in 0..8 {
+            let last = self.last_update.load(Ordering::Relaxed);
 
-        // Try to take one token
-        if new_tokens >= 1000 {
-            // Try compare-and-swap
+            // Calculate tokens to add based on time elapsed
+            let elapsed_millis = (now_nanos.saturating_sub(last)) / 1_000_000;
+            let tokens_to_add = (elapsed_millis * tokens_per_sec) / 1000;
+
+            let current = self.tokens.load(Ordering::Relaxed);
+            let new_tokens = (current + tokens_to_add).min(max_tokens);
+
+            // Not enough tokens
+            if new_tokens < 1000 {
+                return false;
+            }
+
+            // Try to atomically consume one token
             if self
                 .tokens
-                .compare_exchange(
+                .compare_exchange_weak(
                     current,
                     new_tokens - 1000,
                     Ordering::Relaxed,
@@ -76,18 +80,20 @@ impl TokenBucket {
                 )
                 .is_ok()
             {
+                // Update timestamp via CAS (best-effort, avoids stealing other threads' elapsed time)
+                let _ = self.last_update.compare_exchange(
+                    last,
+                    now_nanos,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                );
                 self.requests_since_sync.fetch_add(1, Ordering::Relaxed);
                 return true;
             }
-            // CAS failed, try again with updated value
-            let current = self.tokens.load(Ordering::Relaxed);
-            if current >= 1000 {
-                self.tokens.fetch_sub(1000, Ordering::Relaxed);
-                self.requests_since_sync.fetch_add(1, Ordering::Relaxed);
-                return true;
-            }
+            // CAS failed — another thread modified tokens; retry with fresh values
         }
 
+        // All retries exhausted — reject to prevent livelock
         false
     }
 
@@ -380,6 +386,47 @@ mod tests {
         // Both should now be exhausted
         assert!(!limiter.is_allowed_by_key("user:1"));
         assert!(!limiter.is_allowed_by_key("user:2"));
+    }
+
+    #[test]
+    fn test_concurrent_cas_no_underflow() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let config = RateLimitConfig {
+            average: 100,
+            burst: 100,
+            period: ConfigDuration::from_secs(1),
+            source_criterion: None,
+        };
+        let limiter = Arc::new(RateLimitMiddleware::new(config));
+
+        let mut handles = vec![];
+        let allowed_count = Arc::new(AtomicU64::new(0));
+
+        for _ in 0..100 {
+            let limiter = Arc::clone(&limiter);
+            let allowed_count = Arc::clone(&allowed_count);
+            handles.push(thread::spawn(move || {
+                for _ in 0..10 {
+                    if limiter.is_allowed_by_key("stress-test") {
+                        allowed_count.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let total_allowed = allowed_count.load(Ordering::Relaxed);
+        // Should never exceed burst (100) by more than a small margin from token refill
+        assert!(total_allowed <= 110, "allowed {} requests, expected <= 110", total_allowed);
+
+        // Verify no underflow: remaining tokens should be reasonable (not quintillions)
+        let remaining = limiter.remaining_by_key("stress-test");
+        assert!(remaining <= 100, "remaining {} tokens, suspected underflow", remaining);
     }
 
     #[test]

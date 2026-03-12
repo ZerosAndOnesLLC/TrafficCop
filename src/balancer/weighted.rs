@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 /// This provides better distribution than simple weighted selection
 pub struct WeightedBalancer {
     servers: Vec<WeightedServer>,
+    cached_total_weight: AtomicI64,
 }
 
 struct WeightedServer {
@@ -17,7 +18,7 @@ struct WeightedServer {
 
 impl WeightedBalancer {
     pub fn new(servers: Vec<Server>) -> Self {
-        let servers = servers
+        let servers: Vec<WeightedServer> = servers
             .into_iter()
             .map(|config| {
                 let weight = config.weight as u64;
@@ -30,15 +31,25 @@ impl WeightedBalancer {
             })
             .collect();
 
-        Self { servers }
+        let total: i64 = servers
+            .iter()
+            .map(|s| s.effective_weight.load(Ordering::Relaxed) as i64)
+            .sum();
+
+        Self {
+            servers,
+            cached_total_weight: AtomicI64::new(total),
+        }
     }
 
-    fn total_weight(&self) -> i64 {
-        self.servers
+    fn recompute_total_weight(&self) {
+        let total: i64 = self
+            .servers
             .iter()
             .filter(|s| s.healthy.load(Ordering::Relaxed))
             .map(|s| s.effective_weight.load(Ordering::Relaxed) as i64)
-            .sum()
+            .sum();
+        self.cached_total_weight.store(total, Ordering::Relaxed);
     }
 }
 
@@ -48,7 +59,7 @@ impl Balancer for WeightedBalancer {
             return None;
         }
 
-        let total = self.total_weight();
+        let total = self.cached_total_weight.load(Ordering::Relaxed);
         if total == 0 {
             // All servers have zero weight or are unhealthy, return first
             return self.servers.first().map(|s| &s.config);
@@ -87,16 +98,17 @@ impl Balancer for WeightedBalancer {
     fn mark_healthy(&self, index: usize) {
         if let Some(server) = self.servers.get(index) {
             server.healthy.store(true, Ordering::Relaxed);
-            // Restore effective weight
             server
                 .effective_weight
                 .store(server.config.weight as u64, Ordering::Relaxed);
+            self.recompute_total_weight();
         }
     }
 
     fn mark_unhealthy(&self, index: usize) {
         if let Some(server) = self.servers.get(index) {
             server.healthy.store(false, Ordering::Relaxed);
+            self.recompute_total_weight();
         }
     }
 }
@@ -112,20 +124,66 @@ mod tests {
                 weight: 5,
                 preserve_path: false,
                 parsed_uri: None,
+                url_arc: None,
             },
             Server {
                 url: "http://server1:8080".to_string(),
                 weight: 3,
                 preserve_path: false,
                 parsed_uri: None,
+                url_arc: None,
             },
             Server {
                 url: "http://server2:8080".to_string(),
                 weight: 2,
                 preserve_path: false,
                 parsed_uri: None,
+                url_arc: None,
             },
         ]
+    }
+
+    #[test]
+    fn test_weighted_distribution_concurrent() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let balancer = Arc::new(WeightedBalancer::new(make_weighted_servers()));
+        let counts: [Arc<std::sync::atomic::AtomicU32>; 3] = [
+            Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            Arc::new(std::sync::atomic::AtomicU32::new(0)),
+        ];
+
+        let mut handles = vec![];
+        for _ in 0..10 {
+            let b = Arc::clone(&balancer);
+            let c = counts.clone();
+            handles.push(thread::spawn(move || {
+                for _ in 0..100 {
+                    let server = b.next_server().unwrap();
+                    if server.url.contains("server0") {
+                        c[0].fetch_add(1, Ordering::Relaxed);
+                    } else if server.url.contains("server1") {
+                        c[1].fetch_add(1, Ordering::Relaxed);
+                    } else {
+                        c[2].fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let c0 = counts[0].load(Ordering::Relaxed);
+        let c1 = counts[1].load(Ordering::Relaxed);
+        let c2 = counts[2].load(Ordering::Relaxed);
+
+        // Weight ratio is 5:3:2. Under concurrency, expect ordering preserved
+        assert!(c0 > c1, "server0({c0}) should get more than server1({c1})");
+        assert!(c1 > c2, "server1({c1}) should get more than server2({c2})");
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use parking_lot::RwLock;
@@ -19,7 +20,7 @@ pub struct PassiveHealthConfig {
     /// Number of consecutive successes before marking healthy again
     pub success_threshold: u32,
     /// Response status codes that count as failures (default: 500-599)
-    pub failure_status_codes: Vec<u16>,
+    pub failure_status_codes: HashSet<u16>,
     /// Response time threshold in ms - responses slower than this count as failure
     pub response_time_threshold_ms: Option<u64>,
     /// Time window to track failures (sliding window)
@@ -325,8 +326,8 @@ impl PassiveHealthConfigBuilder {
         self
     }
 
-    pub fn failure_status_codes(mut self, codes: Vec<u16>) -> Self {
-        self.config.failure_status_codes = codes;
+    pub fn failure_status_codes(mut self, codes: impl IntoIterator<Item = u16>) -> Self {
+        self.config.failure_status_codes = codes.into_iter().collect();
         self
     }
 
@@ -432,7 +433,7 @@ mod tests {
     fn test_custom_failure_codes() {
         let config = PassiveHealthConfig {
             failure_threshold: 2,
-            failure_status_codes: vec![502, 503, 504],
+            failure_status_codes: HashSet::from([502, 503, 504]),
             ..Default::default()
         };
         let checker = PassiveHealthChecker::new(config);

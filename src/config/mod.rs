@@ -8,6 +8,7 @@ pub use watcher::{watch_config_async, ConfigWatcher};
 
 use anyhow::{Context, Result};
 use std::path::Path;
+use std::sync::Arc;
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
@@ -29,11 +30,11 @@ impl Config {
             for service in http.services.values_mut() {
                 if let Some(lb) = &mut service.load_balancer {
                     for server in &mut lb.servers {
+                        server.url_arc = Some(Arc::from(server.url.as_str()));
                         if let Ok(uri) = server.url.parse::<hyper::Uri>() {
-                            server.parsed_uri = Some(ParsedBackendUri {
-                                scheme: uri.scheme_str().unwrap_or("http").to_string(),
-                                authority: uri.authority().map(|a| a.to_string()).unwrap_or_default(),
-                            });
+                            if let (Some(scheme), Some(authority)) = (uri.scheme().cloned(), uri.authority().cloned()) {
+                                server.parsed_uri = Some(ParsedBackendUri { scheme, authority });
+                            }
                         }
                     }
                 }

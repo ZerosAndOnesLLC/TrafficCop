@@ -1,0 +1,196 @@
+http:
+  serversTransports:
+    sugarApacheNoKeepalive:
+      maxIdleConnsPerHost: -1
+      forwardingTimeouts:
+        idleConnTimeout: "5s"
+  services:
+    cloudstack:
+      loadBalancer:
+        serversTransport: "sugarApacheNoKeepalive"
+        healthCheck:
+          path: "/healthcheck.php"
+          timeout: "30s"
+        servers:
+          - url: "http://10.0.1.79:80"
+          - url: "http://10.0.0.209:80"
+  middlewares:
+    lp-traefik-1-per_ip_api_ratelimit:
+      rateLimit:
+        average: 101
+        burst: 101
+        period: 1s
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+        redis:
+          endpoints:
+            - "lp-test-1-traefik.c8eix2.ng.0001.usw2.cache.amazonaws.com:6379"
+    lp-traefik-1-per_vhost_api_ratelimit:
+      rateLimit:
+        average: 101
+        burst: 101
+        period: 1s
+        sourceCriterion:
+          requestHost: true
+        redis:
+          endpoints:
+            - "lp-test-1-traefik.c8eix2.ng.0001.usw2.cache.amazonaws.com:6379"
+    lp-traefik-1-per_ip_php_ratelimit:
+      rateLimit:
+        average: 101
+        burst: 101
+        period: 1s
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+        redis:
+          endpoints:
+            - "lp-test-1-traefik.c8eix2.ng.0001.usw2.cache.amazonaws.com:6379"
+    lp-traefik-1-per_vhost_php_ratelimit:
+      rateLimit:
+        average: 101
+        burst: 101
+        period: 1s
+        sourceCriterion:
+          requestHost: true
+        redis:
+          endpoints:
+            - "lp-test-1-traefik.c8eix2.ng.0001.usw2.cache.amazonaws.com:6379"
+    lp-traefik-1-per_ip_default_ratelimit:
+      rateLimit:
+        average: 101
+        burst: 101
+        period: 1s
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+        redis:
+          endpoints:
+            - "lp-test-1-traefik.c8eix2.ng.0001.usw2.cache.amazonaws.com:6379"
+    lp-traefik-1-per_vhost_default_ratelimit:
+      rateLimit:
+        average: 101
+        burst: 101
+        period: 1s
+        sourceCriterion:
+          requestHost: true
+        redis:
+          endpoints:
+            - "lp-test-1-traefik.c8eix2.ng.0001.usw2.cache.amazonaws.com:6379"
+    lp-test-monitor-per_ip_api_ratelimit:
+      rateLimit:
+        average: 101
+        burst: 101
+        period: 1s
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+        redis:
+          endpoints:
+            - "lp-test-1-traefik.c8eix2.ng.0001.usw2.cache.amazonaws.com:6379"
+    lp-test-monitor-per_vhost_api_ratelimit:
+      rateLimit:
+        average: 101
+        burst: 101
+        period: 1s
+        sourceCriterion:
+          requestHost: true
+        redis:
+          endpoints:
+            - "lp-test-1-traefik.c8eix2.ng.0001.usw2.cache.amazonaws.com:6379"
+    lp-test-monitor-per_ip_php_ratelimit:
+      rateLimit:
+        average: 101
+        burst: 101
+        period: 1s
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+        redis:
+          endpoints:
+            - "lp-test-1-traefik.c8eix2.ng.0001.usw2.cache.amazonaws.com:6379"
+    lp-test-monitor-per_vhost_php_ratelimit:
+      rateLimit:
+        average: 101
+        burst: 101
+        period: 1s
+        sourceCriterion:
+          requestHost: true
+        redis:
+          endpoints:
+            - "lp-test-1-traefik.c8eix2.ng.0001.usw2.cache.amazonaws.com:6379"
+    lp-test-monitor-per_ip_default_ratelimit:
+      rateLimit:
+        average: 101
+        burst: 101
+        period: 1s
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+        redis:
+          endpoints:
+            - "lp-test-1-traefik.c8eix2.ng.0001.usw2.cache.amazonaws.com:6379"
+    lp-test-monitor-per_vhost_default_ratelimit:
+      rateLimit:
+        average: 101
+        burst: 101
+        period: 1s
+        sourceCriterion:
+          requestHost: true
+        redis:
+          endpoints:
+            - "lp-test-1-traefik.c8eix2.ng.0001.usw2.cache.amazonaws.com:6379"
+  routers:
+    prometheus-api:
+      entryPoints:
+        - metrics
+      priority: 1
+      rule: "Path(`/metrics`)"
+      service: prometheus@internal
+    traefik-ping-internal:
+      priority: 2
+      rule: "Path(`/ping`)"
+      service: ping@internal
+    lp-traefik-1-default:
+      priority: 10
+      rule: "Host(`lp-traefik-1.msdev.sugarcrm.com`)"
+      middlewares:
+        - lp-traefik-1-per_ip_default_ratelimit
+        - lp-traefik-1-per_vhost_default_ratelimit
+      service: 'cloudstack'
+    lp-traefik-1-php:
+      priority: 11
+      rule: "Host(`lp-traefik-1.msdev.sugarcrm.com`) && PathRegexp(`\\.php$`)"
+      middlewares:
+        - lp-traefik-1-per_ip_php_ratelimit
+        - lp-traefik-1-per_vhost_php_ratelimit
+      service: 'cloudstack'
+    lp-traefik-1-api:
+      priority: 12
+      rule: "Host(`lp-traefik-1.msdev.sugarcrm.com`) && ( PathRegexp(`^/rest/.+$`) || Path(`/api/rest.php`) )"
+      middlewares:
+        - lp-traefik-1-per_ip_api_ratelimit
+        - lp-traefik-1-per_vhost_api_ratelimit
+      service: 'cloudstack'
+    lp-test-monitor-default:
+      priority: 20
+      rule: "Host(`lp-test-monitor.msdev.sugarcrm.com`)"
+      middlewares:
+        - lp-test-monitor-per_ip_default_ratelimit
+        - lp-test-monitor-per_vhost_default_ratelimit
+      service: 'cloudstack'
+    lp-test-monitor-php:
+      priority: 21
+      rule: "Host(`lp-test-monitor.msdev.sugarcrm.com`) && PathRegexp(`\\.php$`)"
+      middlewares:
+        - lp-test-monitor-per_ip_php_ratelimit
+        - lp-test-monitor-per_vhost_php_ratelimit
+      service: 'cloudstack'
+    lp-test-monitor-api:
+      priority: 22
+      rule: "Host(`lp-test-monitor.msdev.sugarcrm.com`) && ( PathRegexp(`^/rest/.+$`) || Path(`/api/rest.php`) )"
+      middlewares:
+        - lp-test-monitor-per_ip_api_ratelimit
+        - lp-test-monitor-per_vhost_api_ratelimit
+      service: 'cloudstack'
