@@ -1,11 +1,13 @@
 pub mod builtin;
 mod chain;
+pub mod registry;
 
 pub use builtin::{
     BasicAuthMiddleware, CorsMiddleware, HeadersMiddleware, IpAllowListMiddleware,
     IpDenyListMiddleware, RateLimitMiddleware, RedirectSchemeMiddleware,
 };
 pub use chain::MiddlewareChain;
+pub use registry::{MiddlewareRegistry, RequestContext};
 
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
@@ -25,11 +27,16 @@ pub trait Middleware: Send + Sync {
     ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>>;
 }
 
+/// Trait for the terminal endpoint in a middleware chain.
+/// Unlike `Fn`, this correctly ties the returned future's lifetime to `&self`,
+/// allowing the future to borrow data owned by the endpoint.
+pub trait Endpoint: Send + Sync {
+    fn call(&self, req: Request<Incoming>) -> BoxFuture<'_, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>>;
+}
+
 pub struct Next<'a> {
     pub(crate) middlewares: &'a [Box<dyn Middleware>],
-    pub(crate) endpoint: &'a dyn Fn(
-        Request<Incoming>,
-    ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>>,
+    pub(crate) endpoint: &'a dyn Endpoint,
 }
 
 impl<'a> Next<'a> {
@@ -44,7 +51,7 @@ impl<'a> Next<'a> {
             };
             current.handle(req, next)
         } else {
-            (self.endpoint)(req)
+            self.endpoint.call(req)
         }
     }
 }

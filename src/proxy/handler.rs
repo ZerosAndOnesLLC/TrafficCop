@@ -1,4 +1,5 @@
 use crate::config::ParsedBackendUri;
+use crate::middleware::{BoxFuture, Endpoint, Middleware, MiddlewareRegistry, Next};
 use crate::router::Router;
 use crate::service::ServiceManager;
 use bytes::Bytes;
@@ -9,6 +10,7 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use tracing::{debug, error, warn};
@@ -52,6 +54,7 @@ impl ProxyHandler {
         entrypoint: &str,
         router: &Router,
         services: &ServiceManager,
+        middleware_registry: &MiddlewareRegistry,
         is_tls: bool,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
         let start = Instant::now();
@@ -103,14 +106,85 @@ impl ProxyHandler {
         // Use references to avoid cloning - only clone service_name which is needed for lookup
         let route_name = &route.name;
         let service_name = &route.service;
+        let route_middlewares = &route.middlewares;
 
         debug!(
             "Matched route '{}' -> service '{}'",
             route_name, service_name
         );
 
-        // Get service and select backend
-        // Get backend info - clone parsed_uri if available, otherwise clone URL
+        // Resolve middleware chain for this route
+        let mw_instances = middleware_registry.resolve(route_middlewares);
+
+        if mw_instances.is_empty() {
+            // No middleware — execute backend forwarding directly
+            self.forward_to_backend(req, remote_addr, service_name, services, host, is_tls, is_grpc, start).await
+        } else {
+            // Build middleware chain
+            let mw_boxes: Vec<Box<dyn Middleware>> = mw_instances
+                .iter()
+                .map(|m| Box::new(ArcMiddleware(Arc::clone(m))) as Box<dyn Middleware>)
+                .collect();
+
+            let fwd = ForwardEndpoint {
+                client: &self.client,
+                remote_addr,
+                service_name: service_name.clone(),
+                services,
+                host: host.map(|h| h.to_string()),
+                is_tls,
+                is_grpc,
+                start,
+            };
+
+            let next = Next {
+                middlewares: &mw_boxes,
+                endpoint: &fwd,
+            };
+
+            next.run(req).await
+        }
+    }
+
+    /// Forward a request to the backend without middleware
+    async fn forward_to_backend(
+        &self,
+        req: Request<Incoming>,
+        remote_addr: SocketAddr,
+        service_name: &str,
+        services: &ServiceManager,
+        host: Option<&str>,
+        is_tls: bool,
+        is_grpc: bool,
+        start: Instant,
+    ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+        Self::forward_to_backend_inner(
+            &self.client,
+            req,
+            remote_addr,
+            service_name,
+            services,
+            host,
+            is_tls,
+            is_grpc,
+            start,
+        )
+        .await
+    }
+
+    /// Inner forwarding logic shared between direct and middleware-chained paths
+    async fn forward_to_backend_inner(
+        client: &Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
+        req: Request<Incoming>,
+        remote_addr: SocketAddr,
+        service_name: &str,
+        services: &ServiceManager,
+        host: Option<&str>,
+        is_tls: bool,
+        is_grpc: bool,
+        start: Instant,
+    ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+        // Get backend info
         let (backend_url, parsed_uri) = {
             let service = match services.get_service(service_name) {
                 Some(s) => s,
@@ -145,7 +219,6 @@ impl ProxyHandler {
                     ));
                 }
             }
-            // service guard is dropped here, releasing DashMap lock
         };
 
         debug!("Selected backend: {}", backend_url);
@@ -156,7 +229,7 @@ impl ProxyHandler {
             return super::websocket::handle_websocket_upgrade(req, &backend_url, remote_addr).await;
         }
 
-        // Build the proxied request - use pre-parsed URI if available
+        // Build the proxied request
         let backend_uri = match Self::build_backend_uri_fast(&backend_url, req.uri(), parsed_uri.as_ref()) {
             Ok(uri) => uri,
             Err(e) => {
@@ -169,7 +242,6 @@ impl ProxyHandler {
             }
         };
 
-        // Create the proxied request
         let proxied_req =
             match Self::build_proxied_request(req, backend_uri, remote_addr, host, is_tls, is_grpc)
             {
@@ -184,15 +256,13 @@ impl ProxyHandler {
                 }
             };
 
-        // Forward the request to the backend with timeout
-        // Default request timeout of 30 seconds (can be configured via serversTransport)
-        // For gRPC, use longer timeout as streaming calls may be long-lived
+        // Forward with timeout
         let request_timeout = if is_grpc {
-            Duration::from_secs(300) // 5 minutes for gRPC
+            Duration::from_secs(300)
         } else {
             Duration::from_secs(30)
         };
-        let backend_future = self.client.request(proxied_req);
+        let backend_future = client.request(proxied_req);
 
         match timeout(request_timeout, backend_future).await {
             Ok(Ok(response)) => {
@@ -206,7 +276,6 @@ impl ProxyHandler {
                 let (parts, body) = response.into_parts();
                 let mut response = Response::from_parts(parts, body.map_err(|e| e.into()).boxed());
 
-                // Remove hop-by-hop headers from response (but not for gRPC trailers)
                 if !is_grpc {
                     for header in hop_by_hop_headers() {
                         response.headers_mut().remove(header);
@@ -431,5 +500,50 @@ impl ProxyHandler {
 impl Default for ProxyHandler {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Wrapper to use `Arc<dyn Middleware>` as `Box<dyn Middleware>` in the chain
+struct ArcMiddleware(Arc<dyn Middleware>);
+
+impl Middleware for ArcMiddleware {
+    fn name(&self) -> &str {
+        self.0.name()
+    }
+
+    fn handle<'a>(
+        &'a self,
+        req: Request<Incoming>,
+        next: Next<'a>,
+    ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+        self.0.handle(req, next)
+    }
+}
+
+/// Terminal endpoint for the middleware chain — forwards the request to the backend
+struct ForwardEndpoint<'a> {
+    client: &'a Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
+    remote_addr: SocketAddr,
+    service_name: String,
+    services: &'a ServiceManager,
+    host: Option<String>,
+    is_tls: bool,
+    is_grpc: bool,
+    start: Instant,
+}
+
+impl Endpoint for ForwardEndpoint<'_> {
+    fn call(&self, req: Request<Incoming>) -> BoxFuture<'_, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+        Box::pin(ProxyHandler::forward_to_backend_inner(
+            self.client,
+            req,
+            self.remote_addr,
+            &self.service_name,
+            self.services,
+            self.host.as_deref(),
+            self.is_tls,
+            self.is_grpc,
+            self.start,
+        ))
     }
 }
