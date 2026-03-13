@@ -5,6 +5,7 @@ pub use listener::Listener;
 pub use udp_listener::UdpListener;
 
 use crate::config::{watch_config_async, Config};
+use crate::health::{PassiveHealthChecker, PassiveHealthConfig};
 use crate::middleware::MiddlewareRegistry;
 use crate::proxy::ProxyHandler;
 use crate::router::Router;
@@ -105,6 +106,7 @@ pub struct SharedState {
     pub router: ArcSwap<Router>,
     pub services: ArcSwap<ServiceManager>,
     pub middlewares: ArcSwap<MiddlewareRegistry>,
+    pub passive_health: Arc<PassiveHealthChecker>,
     pub connections: ConnectionTracker,
     /// Pending ACME challenges for HTTP-01 validation
     pub acme_challenges: Arc<RwLock<HashMap<String, PendingChallenge>>>,
@@ -118,6 +120,7 @@ impl SharedState {
             router: ArcSwap::from_pointee(Router::from_config(config)),
             services: ArcSwap::from_pointee(ServiceManager::new(config)),
             middlewares: ArcSwap::from_pointee(MiddlewareRegistry::from_config(config.middlewares())),
+            passive_health: Arc::new(PassiveHealthChecker::new(PassiveHealthConfig::default())),
             connections: ConnectionTracker::new(),
             acme_challenges: Arc::new(RwLock::new(HashMap::new())),
             cert_resolver: None,
@@ -130,6 +133,7 @@ impl SharedState {
             router: ArcSwap::from_pointee(Router::from_config(config)),
             services: ArcSwap::from_pointee(ServiceManager::new(config)),
             middlewares: ArcSwap::from_pointee(MiddlewareRegistry::from_config(config.middlewares())),
+            passive_health: Arc::new(PassiveHealthChecker::new(PassiveHealthConfig::default())),
             connections: ConnectionTracker::new(),
             acme_challenges: acme_manager.get_pending_challenges(),
             cert_resolver: Some(acme_manager.get_resolver()),

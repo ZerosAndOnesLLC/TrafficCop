@@ -111,6 +111,10 @@ impl Balancer for WeightedBalancer {
             self.recompute_total_weight();
         }
     }
+
+    fn find_server_index(&self, url: &str) -> Option<usize> {
+        self.servers.iter().position(|s| s.config.url == url)
+    }
 }
 
 #[cfg(test)]
