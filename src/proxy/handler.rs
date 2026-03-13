@@ -1,4 +1,5 @@
 use crate::config::ParsedBackendUri;
+use crate::health::{HealthChange, PassiveHealthChecker};
 use crate::middleware::{BoxFuture, Endpoint, Middleware, MiddlewareRegistry, Next};
 use crate::router::Router;
 use crate::service::ServiceManager;
@@ -13,7 +14,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use super::grpc;
 
@@ -69,6 +70,7 @@ impl ProxyHandler {
         router: &Router,
         services: &ServiceManager,
         middleware_registry: &MiddlewareRegistry,
+        passive_health: &Arc<PassiveHealthChecker>,
         is_tls: bool,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
         let start = Instant::now();
@@ -132,7 +134,7 @@ impl ProxyHandler {
 
         if mw_instances.is_empty() {
             // No middleware — execute backend forwarding directly
-            self.forward_to_backend(req, remote_addr, service_name, services, host, is_tls, is_grpc, start).await
+            self.forward_to_backend(req, remote_addr, service_name, services, passive_health, host, is_tls, is_grpc, start).await
         } else {
             // Build middleware chain
             let mw_boxes: Vec<Box<dyn Middleware>> = mw_instances
@@ -146,6 +148,7 @@ impl ProxyHandler {
                 remote_addr,
                 service_name: service_name.clone(),
                 services,
+                passive_health: Arc::clone(passive_health),
                 host: host.map(|h| h.to_string()),
                 is_tls,
                 is_grpc,
@@ -168,6 +171,7 @@ impl ProxyHandler {
         remote_addr: SocketAddr,
         service_name: &str,
         services: &ServiceManager,
+        passive_health: &Arc<PassiveHealthChecker>,
         host: Option<&str>,
         is_tls: bool,
         is_grpc: bool,
@@ -180,6 +184,7 @@ impl ProxyHandler {
             remote_addr,
             service_name,
             services,
+            passive_health,
             host,
             is_tls,
             is_grpc,
@@ -196,6 +201,7 @@ impl ProxyHandler {
         remote_addr: SocketAddr,
         service_name: &str,
         services: &ServiceManager,
+        passive_health: &PassiveHealthChecker,
         host: Option<&str>,
         is_tls: bool,
         is_grpc: bool,
@@ -310,6 +316,10 @@ impl ProxyHandler {
                     status, elapsed, backend_url
                 );
 
+                // Record response for passive health checking
+                let change = passive_health.record_response(&backend_url, status.as_u16(), elapsed);
+                Self::apply_health_change(change, &backend_url, service_name, services);
+
                 let (parts, body) = response.into_parts();
                 let mut response = Response::from_parts(parts, body.map_err(|e| e.into()).boxed());
 
@@ -327,6 +337,11 @@ impl ProxyHandler {
                     "Backend request failed in {:?}: {} -> {}",
                     elapsed, backend_url, e
                 );
+
+                // Connection error counts as a 502 for passive health
+                let change = passive_health.record_response(&backend_url, 502, elapsed);
+                Self::apply_health_change(change, &backend_url, service_name, services);
+
                 Ok(Self::error_response_maybe_grpc(
                     StatusCode::BAD_GATEWAY,
                     "Bad Gateway",
@@ -339,11 +354,46 @@ impl ProxyHandler {
                     "Request timeout after {:?} (limit: {:?}): {}",
                     elapsed, request_timeout, backend_url
                 );
+
+                // Timeout counts as a 504 for passive health
+                let change = passive_health.record_response(&backend_url, 504, elapsed);
+                Self::apply_health_change(change, &backend_url, service_name, services);
+
                 Ok(Self::error_response_maybe_grpc(
                     StatusCode::GATEWAY_TIMEOUT,
                     "Gateway Timeout",
                     is_grpc,
                 ))
+            }
+        }
+    }
+
+    /// Apply a passive health change to the load balancer
+    fn apply_health_change(
+        change: HealthChange,
+        backend_url: &str,
+        service_name: &str,
+        services: &ServiceManager,
+    ) {
+        if change == HealthChange::NoChange {
+            return;
+        }
+
+        if let Some(service) = services.get_service(service_name) {
+            if let Some(balancer) = &service.balancer {
+                if let Some(idx) = balancer.find_server_index(backend_url) {
+                    match change {
+                        HealthChange::BecameUnhealthy => {
+                            warn!("Passive health: marking {} unhealthy", backend_url);
+                            balancer.mark_unhealthy(idx);
+                        }
+                        HealthChange::BecameHealthy => {
+                            info!("Passive health: marking {} healthy", backend_url);
+                            balancer.mark_healthy(idx);
+                        }
+                        HealthChange::NoChange => {}
+                    }
+                }
             }
         }
     }
@@ -578,6 +628,7 @@ struct ForwardEndpoint<'a> {
     remote_addr: SocketAddr,
     service_name: String,
     services: &'a ServiceManager,
+    passive_health: Arc<PassiveHealthChecker>,
     host: Option<String>,
     is_tls: bool,
     is_grpc: bool,
@@ -593,6 +644,7 @@ impl Endpoint for ForwardEndpoint<'_> {
             self.remote_addr,
             &self.service_name,
             self.services,
+            &self.passive_health,
             self.host.as_deref(),
             self.is_tls,
             self.is_grpc,

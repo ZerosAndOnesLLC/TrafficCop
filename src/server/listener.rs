@@ -216,9 +216,10 @@ impl Listener {
                 let router = state.router.load();
                 let services = state.services.load();
                 let middlewares = state.middlewares.load();
+                let passive_health = Arc::clone(&state.passive_health);
 
                 proxy
-                    .handle(req, remote_addr, &ep, &router, &services, &middlewares, is_tls)
+                    .handle(req, remote_addr, &ep, &router, &services, &middlewares, &passive_health, is_tls)
                     .await
             }
         });

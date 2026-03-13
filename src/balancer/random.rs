@@ -94,6 +94,10 @@ impl Balancer for RandomBalancer {
             server.healthy.store(false, Ordering::Relaxed);
         }
     }
+
+    fn find_server_index(&self, url: &str) -> Option<usize> {
+        self.servers.iter().position(|s| s.config.url == url)
+    }
 }
 
 #[cfg(test)]

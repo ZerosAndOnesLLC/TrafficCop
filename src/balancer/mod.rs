@@ -16,6 +16,7 @@ pub trait Balancer: Send + Sync {
     fn next_server(&self) -> Option<&Server>;
     fn mark_healthy(&self, index: usize);
     fn mark_unhealthy(&self, index: usize);
+    fn find_server_index(&self, url: &str) -> Option<usize>;
 }
 
 pub struct LoadBalancer {
@@ -72,5 +73,9 @@ impl LoadBalancer {
 
     pub fn mark_unhealthy(&self, index: usize) {
         self.strategy.mark_unhealthy(index);
+    }
+
+    pub fn find_server_index(&self, url: &str) -> Option<usize> {
+        self.strategy.find_server_index(url)
     }
 }
