@@ -28,7 +28,7 @@ Replace `<VERSION>` with the release version (e.g., `1.0.4`).
 git clone https://github.com/ZerosAndOnesLLC/TrafficCop.git
 cd TrafficCop
 cargo build --release
-# Binary is at ./target/release/traffic_management
+# Binary is at ./target/release/trafficcop
 ```
 
 ### Docker

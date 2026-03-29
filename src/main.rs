@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use traffic_management::{
+use trafficcop::{
     config::Config,
     metrics,
     server::Server,

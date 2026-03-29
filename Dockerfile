@@ -18,7 +18,7 @@ RUN mkdir src && \
     echo "pub fn placeholder() {}" > src/lib.rs
 
 # Build dependencies only (cached unless Cargo.toml/lock changes)
-RUN cargo build --release && rm -rf src target/release/.fingerprint/traffic_management*
+RUN cargo build --release && rm -rf src target/release/.fingerprint/trafficcop*
 
 # Copy actual source code
 COPY src ./src
@@ -26,7 +26,7 @@ COPY benches ./benches
 COPY config ./config
 
 # Build the release binary
-RUN cargo build --release --bin traffic_management
+RUN cargo build --release --bin trafficcop
 
 # Runtime stage - minimal image
 FROM debian:bookworm-slim
@@ -42,7 +42,7 @@ RUN useradd -r -s /bin/false -u 1000 trafficcop
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /app/target/release/traffic_management /app/trafficcop
+COPY --from=builder /app/target/release/trafficcop /app/trafficcop
 
 # Copy example config
 COPY --from=builder /app/config/example.yaml /app/config/example.yaml

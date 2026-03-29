@@ -1,9 +1,9 @@
 [package]
-name = "traffic_management"
-version = "1.0.14"
+name = "trafficcop"
+version = "1.0.0"
 edition = "2024"
 authors = ["Zeros and Ones LLC <support@zerosandones.us>"]
-description = "High-performance reverse proxy and load balancer"
+description = "TrafficCop Traffic Manager - High-performance reverse proxy and load balancer"
 license = "MIT"
 repository = "https://github.com/ZerosAndOnesLLC/TrafficCop"
 keywords = ["proxy", "load-balancer", "reverse-proxy", "http", "grpc"]

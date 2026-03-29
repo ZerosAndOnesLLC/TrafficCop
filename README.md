@@ -71,13 +71,13 @@ cargo build --release
 ### Run
 
 ```bash
-./target/release/traffic_management -c config.yaml
+./target/release/trafficcop -c config.yaml
 ```
 
 ### Validate Configuration
 
 ```bash
-./target/release/traffic_management -c config.yaml --validate
+./target/release/trafficcop -c config.yaml --validate
 ```
 
 ## Configuration
@@ -751,7 +751,7 @@ cargo bench
 ### Debug Mode
 
 ```bash
-./target/release/traffic_management -c config.yaml --debug
+./target/release/trafficcop -c config.yaml --debug
 ```
 
 ### Docker
@@ -783,7 +783,7 @@ docker run -d \
 ## Project Structure
 
 ```
-traffic_management/
+trafficcop/
 ├── src/
 │   ├── main.rs          # CLI entry point
 │   ├── lib.rs           # Library entry point
