@@ -28,7 +28,7 @@ pub async fn create_store_from_config(config: &ClusterConfig) -> anyhow::Result<
                 }),
                 pool_size: 10,
                 key_prefix: redis_config.root_key.clone(),
-                connect_timeout: redis_config.timeout.clone(),
+                connect_timeout: redis_config.timeout,
                 operation_timeout: crate::config::Duration::from_secs(1),
                 sentinel: redis_config.sentinel.as_ref().map(|s| crate::store::SentinelConfig {
                     master_name: s.master_name.clone(),

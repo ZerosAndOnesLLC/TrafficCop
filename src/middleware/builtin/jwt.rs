@@ -79,11 +79,10 @@ impl JwtMiddleware {
                     ClaimValue::Null => continue,
                 };
 
-                if let Ok(header) = HeaderName::try_from(header_name.as_str()) {
-                    if let Ok(val) = HeaderValue::from_str(&value_str) {
+                if let Ok(header) = HeaderName::try_from(header_name.as_str())
+                    && let Ok(val) = HeaderValue::from_str(&value_str) {
                         headers_to_add.insert(header, val);
                     }
-                }
             }
         }
 
@@ -97,44 +96,37 @@ impl JwtMiddleware {
     /// Extract token from request (header, query param, or cookie)
     fn extract_token<B>(&self, req: &Request<B>) -> Option<String> {
         // Try header first
-        if let Some(auth) = req.headers().get(&self.header_name) {
-            if let Ok(auth_str) = auth.to_str() {
-                if auth_str.starts_with(&self.header_prefix) {
+        if let Some(auth) = req.headers().get(&self.header_name)
+            && let Ok(auth_str) = auth.to_str()
+                && auth_str.starts_with(&self.header_prefix) {
                     return Some(auth_str[self.header_prefix.len()..].to_string());
                 }
-            }
-        }
 
         // Try query parameter
-        if let Some(ref param) = self.query_param {
-            if let Some(query) = req.uri().query() {
+        if let Some(ref param) = self.query_param
+            && let Some(query) = req.uri().query() {
                 for pair in query.split('&') {
                     let mut parts = pair.splitn(2, '=');
-                    if let (Some(key), Some(value)) = (parts.next(), parts.next()) {
-                        if key == param {
+                    if let (Some(key), Some(value)) = (parts.next(), parts.next())
+                        && key == param {
                             return Some(value.to_string());
                         }
-                    }
                 }
             }
-        }
 
         // Try cookie
-        if let Some(ref cookie_name) = self.cookie_name {
-            if let Some(cookie_header) = req.headers().get(COOKIE) {
-                if let Ok(cookies) = cookie_header.to_str() {
+        if let Some(ref cookie_name) = self.cookie_name
+            && let Some(cookie_header) = req.headers().get(COOKIE)
+                && let Ok(cookies) = cookie_header.to_str() {
                     for cookie in cookies.split(';') {
                         let cookie = cookie.trim();
                         let mut parts = cookie.splitn(2, '=');
-                        if let (Some(name), Some(value)) = (parts.next(), parts.next()) {
-                            if name.trim() == cookie_name {
+                        if let (Some(name), Some(value)) = (parts.next(), parts.next())
+                            && name.trim() == cookie_name {
                                 return Some(value.to_string());
                             }
-                        }
                     }
                 }
-            }
-        }
 
         None
     }
@@ -204,18 +196,16 @@ impl JwtMiddleware {
             .as_secs();
 
         // Check expiration
-        if let Some(ClaimValue::Number(exp)) = claims.get("exp") {
-            if (*exp as u64) < now {
+        if let Some(ClaimValue::Number(exp)) = claims.get("exp")
+            && (*exp as u64) < now {
                 return Err((StatusCode::UNAUTHORIZED, "Token expired".to_string()));
             }
-        }
 
         // Check not before
-        if let Some(ClaimValue::Number(nbf)) = claims.get("nbf") {
-            if (*nbf as u64) > now {
+        if let Some(ClaimValue::Number(nbf)) = claims.get("nbf")
+            && (*nbf as u64) > now {
                 return Err((StatusCode::UNAUTHORIZED, "Token not yet valid".to_string()));
             }
-        }
 
         // Check issuer
         if let Some(ref expected_iss) = self.issuer {

@@ -105,18 +105,16 @@ impl Rule {
                 // Try to read two hex digits
                 let mut hex = String::new();
                 for _ in 0..2 {
-                    if let Some(&next) = chars.peek() {
-                        if next.is_ascii_hexdigit() {
+                    if let Some(&next) = chars.peek()
+                        && next.is_ascii_hexdigit() {
                             hex.push(chars.next().unwrap());
                         }
-                    }
                 }
-                if hex.len() == 2 {
-                    if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                if hex.len() == 2
+                    && let Ok(byte) = u8::from_str_radix(&hex, 16) {
                         result.push(byte as char);
                         continue;
                     }
-                }
                 // If decode failed, keep original
                 result.push('%');
                 result.push_str(&hex);
@@ -180,8 +178,8 @@ impl RuleParser {
     fn parse_unary(input: &str) -> Result<Rule, RuleParseError> {
         let input = input.trim();
 
-        if input.starts_with('!') {
-            let inner = Self::parse_unary(&input[1..])?;
+        if let Some(rest) = input.strip_prefix('!') {
+            let inner = Self::parse_unary(rest)?;
             return Ok(Rule::Not(Box::new(inner)));
         }
 
@@ -289,9 +287,9 @@ impl RuleParser {
         let mut args = Vec::new();
         let mut current = String::new();
         let mut in_backtick = false;
-        let mut chars = input.chars().peekable();
+        let chars = input.chars().peekable();
 
-        while let Some(c) = chars.next() {
+        for c in chars {
             match c {
                 '`' => {
                     if in_backtick {

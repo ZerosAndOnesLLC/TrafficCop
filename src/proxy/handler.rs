@@ -62,6 +62,7 @@ impl ProxyHandler {
         Self { client, h2_client }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn handle(
         &self,
         req: Request<Incoming>,
@@ -165,6 +166,7 @@ impl ProxyHandler {
     }
 
     /// Forward a request to the backend without middleware
+    #[allow(clippy::too_many_arguments)]
     async fn forward_to_backend(
         &self,
         req: Request<Incoming>,
@@ -194,6 +196,7 @@ impl ProxyHandler {
     }
 
     /// Inner forwarding logic shared between direct and middleware-chained paths
+    #[allow(clippy::too_many_arguments)]
     async fn forward_to_backend_inner(
         client: &Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
         h2_client: &Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
@@ -321,7 +324,7 @@ impl ProxyHandler {
                 Self::apply_health_change(change, &backend_url, service_name, services);
 
                 let (parts, body) = response.into_parts();
-                let mut response = Response::from_parts(parts, body.map_err(|e| e.into()).boxed());
+                let mut response = Response::from_parts(parts, body.map_err(|e| e).boxed());
 
                 if !is_grpc {
                     for header in hop_by_hop_headers() {
@@ -379,9 +382,9 @@ impl ProxyHandler {
             return;
         }
 
-        if let Some(service) = services.get_service(service_name) {
-            if let Some(balancer) = &service.balancer {
-                if let Some(idx) = balancer.find_server_index(backend_url) {
+        if let Some(service) = services.get_service(service_name)
+            && let Some(balancer) = &service.balancer
+                && let Some(idx) = balancer.find_server_index(backend_url) {
                     match change {
                         HealthChange::BecameUnhealthy => {
                             warn!("Passive health: marking {} unhealthy", backend_url);
@@ -394,8 +397,6 @@ impl ProxyHandler {
                         HealthChange::NoChange => {}
                     }
                 }
-            }
-        }
     }
 
     #[inline]
@@ -538,13 +539,12 @@ impl ProxyHandler {
             }
         }
 
-        if let Some(host) = original_host {
-            if let Ok(val) = HeaderValue::from_str(host) {
+        if let Some(host) = original_host
+            && let Ok(val) = HeaderValue::from_str(host) {
                 parts
                     .headers
                     .insert(HeaderName::from_static("x-forwarded-host"), val);
             }
-        }
 
         let proto = if is_tls { "https" } else { "http" };
         parts.headers.insert(
@@ -553,13 +553,12 @@ impl ProxyHandler {
         );
 
         // Set the Host header to the backend host
-        if let Some(authority) = parts.uri.authority() {
-            if let Ok(host_value) = HeaderValue::from_str(authority.as_str()) {
+        if let Some(authority) = parts.uri.authority()
+            && let Ok(host_value) = HeaderValue::from_str(authority.as_str()) {
                 parts.headers.insert(HOST, host_value);
             }
-        }
 
-        let boxed_body = body.map_err(|e| e.into()).boxed();
+        let boxed_body = body.map_err(|e| e).boxed();
 
         Ok(Request::from_parts(parts, boxed_body))
     }

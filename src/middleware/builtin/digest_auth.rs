@@ -118,6 +118,7 @@ impl DigestAuthMiddleware {
     }
 
     /// Verify the digest response
+    #[allow(clippy::too_many_arguments)]
     fn verify_response(
         &self,
         username: &str,
@@ -338,7 +339,7 @@ fn md5_compute(message: &[u8]) -> [u8; 16] {
 fn fast_random() -> u32 {
     use std::cell::Cell;
     thread_local! {
-        static STATE: Cell<u32> = Cell::new(0xDEADC0DE);
+        static STATE: Cell<u32> = const { Cell::new(0xDEADC0DE) };
     }
     STATE.with(|state| {
         let mut x = state.get();

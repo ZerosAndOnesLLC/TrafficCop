@@ -12,6 +12,7 @@ use tracing::{debug, info};
 
 /// Storage for ACME account and certificates
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct AcmeStorage {
     /// ACME account information
     #[serde(default)]
@@ -96,14 +97,6 @@ impl StoredCertificate {
     }
 }
 
-impl Default for AcmeStorage {
-    fn default() -> Self {
-        Self {
-            account: None,
-            certificates: HashMap::new(),
-        }
-    }
-}
 
 /// Thread-safe storage manager
 pub struct StorageManager {
@@ -184,9 +177,8 @@ impl StorageManager {
 
             // Check wildcard match
             for cert_domain in &cert.domains {
-                if cert_domain.starts_with("*.") {
-                    let wildcard_base = &cert_domain[2..];
-                    if domain.ends_with(wildcard_base)
+                if let Some(wildcard_base) = cert_domain.strip_prefix("*.")
+                    && domain.ends_with(wildcard_base)
                         && domain[..domain.len() - wildcard_base.len()].matches('.').count() == 0
                     {
                         // Single label before the wildcard base
@@ -194,7 +186,6 @@ impl StorageManager {
                             return Some(cert.clone());
                         }
                     }
-                }
             }
         }
 

@@ -95,17 +95,15 @@ impl CorsMiddleware {
     /// Validate preflight request headers
     fn validate_preflight<B>(&self, req: &Request<B>) -> bool {
         // Check requested method
-        if let Some(method) = req.headers().get(ACCESS_CONTROL_REQUEST_METHOD) {
-            if let Ok(method_str) = method.to_str() {
-                if !self.allowed_methods.contains(method_str) {
+        if let Some(method) = req.headers().get(ACCESS_CONTROL_REQUEST_METHOD)
+            && let Ok(method_str) = method.to_str()
+                && !self.allowed_methods.contains(method_str) {
                     return false;
                 }
-            }
-        }
 
         // Check requested headers
-        if let Some(headers) = req.headers().get(ACCESS_CONTROL_REQUEST_HEADERS) {
-            if let Ok(headers_str) = headers.to_str() {
+        if let Some(headers) = req.headers().get(ACCESS_CONTROL_REQUEST_HEADERS)
+            && let Ok(headers_str) = headers.to_str() {
                 for header in headers_str.split(',') {
                     let header = header.trim().to_lowercase();
                     if !self.allowed_headers_set.contains(&header) {
@@ -116,7 +114,6 @@ impl CorsMiddleware {
                     }
                 }
             }
-        }
 
         true
     }
@@ -208,11 +205,10 @@ impl CorsMiddleware {
         }
 
         // Set exposed headers
-        if let Some(ref exposed) = self.exposed_headers {
-            if let Ok(val) = HeaderValue::from_str(exposed) {
+        if let Some(ref exposed) = self.exposed_headers
+            && let Ok(val) = HeaderValue::from_str(exposed) {
                 headers.insert(ACCESS_CONTROL_EXPOSE_HEADERS, val);
             }
-        }
 
         // Add Vary header
         if self.add_vary_header {

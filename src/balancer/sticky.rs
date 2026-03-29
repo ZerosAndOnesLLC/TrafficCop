@@ -79,11 +79,10 @@ impl StickySessionManager {
         let session_id = self.extract_session_cookie(req)?;
 
         // Check local cache first
-        if let Some(entry) = self.local_cache.get(&session_id) {
-            if entry.cached_at.elapsed() < self.local_cache_ttl {
+        if let Some(entry) = self.local_cache.get(&session_id)
+            && entry.cached_at.elapsed() < self.local_cache_ttl {
                 return self.find_server_index(&entry.server_url);
             }
-        }
 
         None
     }
@@ -93,11 +92,10 @@ impl StickySessionManager {
         let session_id = self.extract_session_cookie(req)?;
 
         // Check local cache first
-        if let Some(entry) = self.local_cache.get(&session_id) {
-            if entry.cached_at.elapsed() < self.local_cache_ttl {
+        if let Some(entry) = self.local_cache.get(&session_id)
+            && entry.cached_at.elapsed() < self.local_cache_ttl {
                 return self.find_server_index(&entry.server_url);
             }
-        }
 
         // Check distributed store
         if let Some(store) = &self.store {
@@ -178,14 +176,13 @@ impl StickySessionManager {
         );
 
         // Store in distributed store
-        if let Some(store) = &self.store {
-            if let Err(e) = store
+        if let Some(store) = &self.store
+            && let Err(e) = store
                 .sticky_session_set(&self.service_name, &session_id, &server.url, self.session_ttl)
                 .await
             {
                 warn!("Failed to store session in distributed store: {}", e);
             }
-        }
 
         Some(session_id)
     }
@@ -234,9 +231,9 @@ impl StickySessionManager {
 
         for cookie in cookies.split(';') {
             let cookie = cookie.trim();
-            let mut parts = cookie.splitn(2, '=');
-            let name = parts.next()?;
-            let value = parts.next()?;
+            let (name, value) = cookie.split_once('=')?;
+            
+            
 
             if name.trim() == self.cookie_config.name {
                 return Some(value.to_string());
@@ -272,14 +269,13 @@ impl StickySessionManager {
     pub async fn delete_session(&self, session_id: &str) {
         self.local_cache.remove(session_id);
 
-        if let Some(store) = &self.store {
-            if let Err(e) = store
+        if let Some(store) = &self.store
+            && let Err(e) = store
                 .sticky_session_delete(&self.service_name, session_id)
                 .await
             {
                 warn!("Failed to delete session from distributed store: {}", e);
             }
-        }
     }
 
     /// Get session count (for metrics)
@@ -317,7 +313,7 @@ fn generate_session_id() -> String {
 fn fast_random() -> u32 {
     use std::cell::Cell;
     thread_local! {
-        static STATE: Cell<u32> = Cell::new(0xBEEFCAFE);
+        static STATE: Cell<u32> = const { Cell::new(0xBEEFCAFE) };
     }
     STATE.with(|state| {
         let mut x = state.get();

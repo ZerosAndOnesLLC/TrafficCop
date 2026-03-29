@@ -160,17 +160,15 @@ impl GrpcWebMiddleware {
         let mut trailers = Vec::new();
 
         // gRPC status and message from headers (Trailers-Only response)
-        if let Some(status) = response.headers().get("grpc-status") {
-            if let Ok(s) = status.to_str() {
+        if let Some(status) = response.headers().get("grpc-status")
+            && let Ok(s) = status.to_str() {
                 trailers.push(("grpc-status".to_string(), s.to_string()));
             }
-        }
 
-        if let Some(message) = response.headers().get("grpc-message") {
-            if let Ok(s) = message.to_str() {
+        if let Some(message) = response.headers().get("grpc-message")
+            && let Ok(s) = message.to_str() {
                 trailers.push(("grpc-message".to_string(), s.to_string()));
             }
-        }
 
         trailers
     }
@@ -188,7 +186,7 @@ pub struct TransformResult {
 fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as usize;
         let b1 = chunk.get(1).copied().unwrap_or(0) as usize;

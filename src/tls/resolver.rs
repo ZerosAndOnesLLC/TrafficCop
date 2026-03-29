@@ -172,9 +172,9 @@ impl CertificateResolver {
         }
 
         // 5. Try to load from ACME storage (in case cache is stale)
-        if let Some(ref storage) = self.acme_storage {
-            if let Some(stored) = storage.get_certificate(domain) {
-                if !stored.is_expired() {
+        if let Some(ref storage) = self.acme_storage
+            && let Some(stored) = storage.get_certificate(domain)
+                && !stored.is_expired() {
                     match Self::load_stored_certificate(&stored) {
                         Ok(cert) => {
                             // Update cache
@@ -189,8 +189,6 @@ impl CertificateResolver {
                         }
                     }
                 }
-            }
-        }
 
         // 6. Return default
         self.default_cert.clone()

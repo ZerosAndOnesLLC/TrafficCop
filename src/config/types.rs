@@ -2172,21 +2172,18 @@ fn default_leader_ttl() -> Duration {
 /// Store configuration (Traefik redis provider compatible)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
+#[derive(Default)]
 pub enum StoreConfig {
     /// Local in-memory store (single node only)
     #[serde(rename = "local")]
+    #[default]
     Local,
 
     /// Redis/Valkey distributed store
     #[serde(rename = "redis")]
-    Redis(RedisStoreConfig),
+    Redis(Box<RedisStoreConfig>),
 }
 
-impl Default for StoreConfig {
-    fn default() -> Self {
-        StoreConfig::Local
-    }
-}
 
 /// Redis/Valkey store configuration
 /// Compatible with Traefik's redis provider format

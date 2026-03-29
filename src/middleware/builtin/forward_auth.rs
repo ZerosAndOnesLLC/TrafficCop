@@ -67,35 +67,31 @@ impl ForwardAuthMiddleware {
         let original_headers = req.headers();
 
         // Always forward these headers if present
-        if let Some(auth) = original_headers.get(AUTHORIZATION) {
-            if let Ok(v) = auth.to_str() {
+        if let Some(auth) = original_headers.get(AUTHORIZATION)
+            && let Ok(v) = auth.to_str() {
                 auth_req = auth_req.header(AUTHORIZATION.as_str(), v);
             }
-        }
 
-        if let Some(cookie) = original_headers.get(COOKIE) {
-            if let Ok(v) = cookie.to_str() {
+        if let Some(cookie) = original_headers.get(COOKIE)
+            && let Ok(v) = cookie.to_str() {
                 auth_req = auth_req.header(COOKIE.as_str(), v);
             }
-        }
 
         // Forward configured request headers
         for header_name in &self.auth_request_headers {
-            if let Some(value) = original_headers.get(header_name) {
-                if let Ok(v) = value.to_str() {
+            if let Some(value) = original_headers.get(header_name)
+                && let Ok(v) = value.to_str() {
                     auth_req = auth_req.header(header_name.as_str(), v);
                 }
-            }
         }
 
         // Forward X-Forwarded-* headers if trusted
         if self.trust_forward_header {
             for (name, value) in original_headers.iter() {
-                if name.as_str().starts_with("x-forwarded-") {
-                    if let Ok(v) = value.to_str() {
+                if name.as_str().starts_with("x-forwarded-")
+                    && let Ok(v) = value.to_str() {
                         auth_req = auth_req.header(name.as_str(), v);
                     }
-                }
             }
         }
 
@@ -104,11 +100,10 @@ impl ForwardAuthMiddleware {
             .header("X-Forwarded-Method", req.method().as_str())
             .header("X-Forwarded-Uri", req.uri().to_string());
 
-        if let Some(host) = original_headers.get("host") {
-            if let Ok(v) = host.to_str() {
+        if let Some(host) = original_headers.get("host")
+            && let Ok(v) = host.to_str() {
                 auth_req = auth_req.header("X-Forwarded-Host", v);
             }
-        }
 
         // Send the request
         let response = match auth_req.send().await {
@@ -145,13 +140,11 @@ impl ForwardAuthMiddleware {
 
             // Extract cookies to add to response
             for cookie_name in &self.add_auth_cookies_to_response {
-                if let Some(set_cookie) = response_headers.get("set-cookie") {
-                    if let Ok(v) = set_cookie.to_str() {
-                        if v.starts_with(cookie_name) {
+                if let Some(set_cookie) = response_headers.get("set-cookie")
+                    && let Ok(v) = set_cookie.to_str()
+                        && v.starts_with(cookie_name) {
                             cookies_to_add.push(v.to_string());
                         }
-                    }
-                }
             }
 
             debug!("Forward auth succeeded, forwarding {} headers", forward_headers.len());

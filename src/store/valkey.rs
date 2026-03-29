@@ -249,17 +249,15 @@ impl ValkeyStore {
                 let _ = config_tx.send(());
             } else if channel == health_channel {
                 // Parse health change: "service:server_url:json"
-                if let Some((service, rest)) = payload.split_once(':') {
-                    if let Some((server_url, json)) = rest.split_once(':') {
-                        if let Ok(status) = serde_json::from_str::<HealthStatus>(json) {
+                if let Some((service, rest)) = payload.split_once(':')
+                    && let Some((server_url, json)) = rest.split_once(':')
+                        && let Ok(status) = serde_json::from_str::<HealthStatus>(json) {
                             let _ = health_tx.send((
                                 service.to_string(),
                                 server_url.to_string(),
                                 status,
                             ));
                         }
-                    }
-                }
             } else if channel == drain_channel {
                 debug!("Drain event received for node: {}", payload);
                 let _ = drain_tx.send(payload);
@@ -467,15 +465,14 @@ impl Store for ValkeyStore {
                 .await
                 .map_err(|e| StoreError::Connection(e.to_string()))?;
 
-            if let Some(json) = json {
-                if let Ok(status) = serde_json::from_str::<HealthStatus>(&json) {
+            if let Some(json) = json
+                && let Ok(status) = serde_json::from_str::<HealthStatus>(&json) {
                     // Extract server_url from key
                     let prefix = self.key(&["health", service, ""]);
                     if let Some(server_url) = key.strip_prefix(&prefix) {
                         result.insert(server_url.to_string(), status);
                     }
                 }
-            }
         }
 
         Ok(result)

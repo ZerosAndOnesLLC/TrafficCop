@@ -55,8 +55,8 @@ async fn main() -> Result<()> {
     }
 
     // Start metrics server if configured
-    if let Some(ref metrics_config) = config.metrics {
-        if let Some(ref prometheus) = metrics_config.prometheus {
+    if let Some(ref metrics_config) = config.metrics
+        && let Some(ref prometheus) = metrics_config.prometheus {
             info!(
                 "Starting Prometheus metrics server on {}",
                 prometheus.address
@@ -68,7 +68,6 @@ async fn main() -> Result<()> {
                 );
             }
         }
-    }
 
     // Initialize ACME if configured via certificatesResolvers
     let server = if let Some((resolver_name, resolver)) = config
@@ -92,16 +91,15 @@ async fn main() -> Result<()> {
 
         // Domains are typically configured per-router via tls.domains in Traefik
         // For now, we'll collect domains from routers that use this resolver
-        for (_name, router) in config.routers() {
-            if let Some(tls) = &router.tls {
-                if tls.cert_resolver.as_deref() == Some(resolver_name) {
+        for router in config.routers().values() {
+            if let Some(tls) = &router.tls
+                && tls.cert_resolver.as_deref() == Some(resolver_name) {
                     for domain in &tls.domains {
                         let mut all = vec![domain.main.clone()];
                         all.extend(domain.sans.clone());
                         builder = builder.domain(all);
                     }
                 }
-            }
         }
 
         match builder.build().await {

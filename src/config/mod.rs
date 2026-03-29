@@ -15,7 +15,7 @@ impl Config {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {:?}", path))?;
 
-        let mut config: Config = serde_yaml::from_str(&content)
+        let mut config: Config = serde_yml::from_str(&content)
             .with_context(|| "Failed to parse config file")?;
 
         config.validate()?;
@@ -31,11 +31,10 @@ impl Config {
                 if let Some(lb) = &mut service.load_balancer {
                     for server in &mut lb.servers {
                         server.url_arc = Some(Arc::from(server.url.as_str()));
-                        if let Ok(uri) = server.url.parse::<hyper::Uri>() {
-                            if let (Some(scheme), Some(authority)) = (uri.scheme().cloned(), uri.authority().cloned()) {
+                        if let Ok(uri) = server.url.parse::<hyper::Uri>()
+                            && let (Some(scheme), Some(authority)) = (uri.scheme().cloned(), uri.authority().cloned()) {
                                 server.parsed_uri = Some(ParsedBackendUri { scheme, authority });
                             }
-                        }
                     }
                 }
             }

@@ -25,12 +25,7 @@ pub struct LoadBalancer {
 
 impl LoadBalancer {
     pub fn new(service: &Service) -> Option<Self> {
-        if let Some(lb) = &service.load_balancer {
-            Some(Self::from_load_balancer(lb))
-        } else {
-            // Weighted and mirroring services are not load balancers
-            None
-        }
+        service.load_balancer.as_ref().map(Self::from_load_balancer)
     }
 
     pub fn from_load_balancer(lb: &LoadBalancerService) -> Self {

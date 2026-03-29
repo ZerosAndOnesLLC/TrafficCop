@@ -242,16 +242,13 @@ pub async fn create_store(config: &StoreConfig) -> StoreResult<Arc<dyn Store>> {
 /// Store configuration (Traefik-compatible)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub enum StoreConfig {
+    #[default]
     Local,
-    Valkey(ValkeyConfig),
+    Valkey(Box<ValkeyConfig>),
 }
 
-impl Default for StoreConfig {
-    fn default() -> Self {
-        StoreConfig::Local
-    }
-}
 
 /// Valkey/Redis configuration (Traefik redis provider compatible)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

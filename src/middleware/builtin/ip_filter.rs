@@ -56,8 +56,8 @@ impl IpAllowListMiddleware {
 
     /// Get IP from X-Forwarded-For based on strategy
     pub fn get_client_ip(&self, forwarded_for: Option<&str>, remote_addr: IpAddr) -> IpAddr {
-        if let Some(strategy) = &self.ip_strategy {
-            if let Some(xff) = forwarded_for {
+        if let Some(strategy) = &self.ip_strategy
+            && let Some(xff) = forwarded_for {
                 let ips: Vec<&str> = xff.split(',').map(|s| s.trim()).collect();
                 let depth = strategy.depth as usize;
 
@@ -71,7 +71,6 @@ impl IpAllowListMiddleware {
                     }
                 }
             }
-        }
 
         remote_addr
     }
@@ -125,8 +124,8 @@ impl IpDenyListMiddleware {
 
     /// Get IP from X-Forwarded-For based on strategy
     pub fn get_client_ip(&self, forwarded_for: Option<&str>, remote_addr: IpAddr) -> IpAddr {
-        if let Some(strategy) = &self.ip_strategy {
-            if let Some(xff) = forwarded_for {
+        if let Some(strategy) = &self.ip_strategy
+            && let Some(xff) = forwarded_for {
                 let ips: Vec<&str> = xff.split(',').map(|s| s.trim()).collect();
                 let depth = strategy.depth as usize;
 
@@ -140,7 +139,6 @@ impl IpDenyListMiddleware {
                     }
                 }
             }
-        }
 
         remote_addr
     }

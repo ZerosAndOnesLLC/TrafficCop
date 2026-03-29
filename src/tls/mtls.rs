@@ -23,16 +23,18 @@ pub enum ClientAuthMode {
     RequireAndVerifyClientCert,
 }
 
-impl ClientAuthMode {
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+impl std::str::FromStr for ClientAuthMode {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
             "noclientcert" | "no_client_cert" | "" => ClientAuthMode::NoClientCert,
             "requestclientcert" | "request_client_cert" => ClientAuthMode::RequestClientCert,
             "requireanyclientcert" | "require_any_client_cert" => ClientAuthMode::RequireAnyClientCert,
             "verifyclientcertifgiven" | "verify_client_cert_if_given" => ClientAuthMode::VerifyClientCertIfGiven,
             "requireandverifyclientcert" | "require_and_verify_client_cert" => ClientAuthMode::RequireAndVerifyClientCert,
             _ => ClientAuthMode::NoClientCert,
-        }
+        })
     }
 }
 
@@ -65,7 +67,7 @@ impl MtlsConfigBuilder {
     pub fn with_client_auth(mut self, client_auth: &ClientAuth) -> Result<Self> {
         // Set auth mode
         if let Some(ref auth_type) = client_auth.client_auth_type {
-            self.client_auth_mode = ClientAuthMode::from_str(auth_type);
+            self.client_auth_mode = auth_type.parse().unwrap();
         }
 
         // Load CA certificates for client verification
@@ -284,7 +286,7 @@ fn base64_encode(input: &[u8]) -> String {
     }
 
     // Add padding
-    while result.len() % 4 != 0 {
+    while !result.len().is_multiple_of(4) {
         result.push('=');
     }
 
@@ -297,12 +299,12 @@ mod tests {
 
     #[test]
     fn test_client_auth_mode_from_str() {
-        assert_eq!(ClientAuthMode::from_str(""), ClientAuthMode::NoClientCert);
-        assert_eq!(ClientAuthMode::from_str("NoClientCert"), ClientAuthMode::NoClientCert);
-        assert_eq!(ClientAuthMode::from_str("RequestClientCert"), ClientAuthMode::RequestClientCert);
-        assert_eq!(ClientAuthMode::from_str("RequireAnyClientCert"), ClientAuthMode::RequireAnyClientCert);
-        assert_eq!(ClientAuthMode::from_str("VerifyClientCertIfGiven"), ClientAuthMode::VerifyClientCertIfGiven);
-        assert_eq!(ClientAuthMode::from_str("RequireAndVerifyClientCert"), ClientAuthMode::RequireAndVerifyClientCert);
+        assert_eq!("".parse::<ClientAuthMode>().unwrap(), ClientAuthMode::NoClientCert);
+        assert_eq!("NoClientCert".parse::<ClientAuthMode>().unwrap(), ClientAuthMode::NoClientCert);
+        assert_eq!("RequestClientCert".parse::<ClientAuthMode>().unwrap(), ClientAuthMode::RequestClientCert);
+        assert_eq!("RequireAnyClientCert".parse::<ClientAuthMode>().unwrap(), ClientAuthMode::RequireAnyClientCert);
+        assert_eq!("VerifyClientCertIfGiven".parse::<ClientAuthMode>().unwrap(), ClientAuthMode::VerifyClientCertIfGiven);
+        assert_eq!("RequireAndVerifyClientCert".parse::<ClientAuthMode>().unwrap(), ClientAuthMode::RequireAndVerifyClientCert);
     }
 
     #[test]

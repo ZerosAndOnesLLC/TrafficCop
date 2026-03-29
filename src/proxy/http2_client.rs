@@ -55,11 +55,10 @@ impl Http2ConnectionPool {
         // Check for existing connection
         {
             let connections = self.connections.read().await;
-            if let Some(conn) = connections.get(&key) {
-                if conn.is_ready().await {
+            if let Some(conn) = connections.get(&key)
+                && conn.is_ready().await {
                     return Ok(Arc::clone(conn));
                 }
-            }
         }
 
         // Create new connection

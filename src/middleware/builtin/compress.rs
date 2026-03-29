@@ -102,14 +102,14 @@ impl CompressMiddleware {
     pub async fn compress_gzip(data: Vec<u8>) -> Result<Vec<u8>, std::io::Error> {
         tokio::task::spawn_blocking(move || Self::compress_gzip_sync(&data))
             .await
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+            .map_err(std::io::Error::other)?
     }
 
     /// Compress bytes with brotli (non-blocking)
     pub async fn compress_brotli(data: Vec<u8>) -> Result<Vec<u8>, std::io::Error> {
         tokio::task::spawn_blocking(move || Self::compress_brotli_sync(&data))
             .await
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+            .map_err(std::io::Error::other)?
     }
 
     /// Compress data with the specified algorithm (non-blocking)

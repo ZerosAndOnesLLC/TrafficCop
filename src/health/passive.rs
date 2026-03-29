@@ -238,11 +238,10 @@ impl PassiveHealthChecker {
         }
 
         // Check response time threshold
-        if let Some(threshold_ms) = self.config.response_time_threshold_ms {
-            if response_time.as_millis() as u64 > threshold_ms {
+        if let Some(threshold_ms) = self.config.response_time_threshold_ms
+            && response_time.as_millis() as u64 > threshold_ms {
                 return true;
             }
-        }
 
         false
     }

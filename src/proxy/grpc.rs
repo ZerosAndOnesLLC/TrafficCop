@@ -168,21 +168,19 @@ pub fn copy_grpc_trailers(
     grpc_status: Option<&str>,
     grpc_message: Option<&str>,
 ) {
-    if let Some(status) = grpc_status {
-        if let Ok(val) = HeaderValue::from_str(status) {
+    if let Some(status) = grpc_status
+        && let Ok(val) = HeaderValue::from_str(status) {
             response
                 .headers_mut()
                 .insert(HeaderName::from_static("grpc-status"), val);
         }
-    }
 
-    if let Some(message) = grpc_message {
-        if let Ok(val) = HeaderValue::from_str(message) {
+    if let Some(message) = grpc_message
+        && let Ok(val) = HeaderValue::from_str(message) {
             response
                 .headers_mut()
                 .insert(HeaderName::from_static("grpc-message"), val);
         }
-    }
 }
 
 #[inline]

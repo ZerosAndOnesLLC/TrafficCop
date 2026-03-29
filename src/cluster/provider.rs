@@ -111,11 +111,10 @@ impl ConfigProvider for HttpConfigProvider {
         }
 
         // Store ETag for next request
-        if let Some(etag) = response.headers().get("etag") {
-            if let Ok(etag_str) = etag.to_str() {
+        if let Some(etag) = response.headers().get("etag")
+            && let Ok(etag_str) = etag.to_str() {
                 *self.last_etag.write().await = Some(etag_str.to_string());
             }
-        }
 
         let content = response.text().await
             .map_err(|e| anyhow::anyhow!("Failed to read response body: {}", e))?;
@@ -133,7 +132,7 @@ impl ConfigProvider for HttpConfigProvider {
 }
 
 /// Configuration provider manager
-#[allow(dead_code)]
+#[allow(dead_code, clippy::type_complexity)]
 pub struct ConfigProviderManager {
     providers: Vec<Box<dyn ConfigProvider>>,
     current_config: RwLock<Option<Config>>,
@@ -197,11 +196,10 @@ impl ConfigProviderManager {
                     tokio::select! {
                         _ = interval_timer.tick() => {
                             debug!("Polling config provider: {}", provider_name);
-                            if let Err(e) = manager.poll_provider(idx).await {
-                                if !e.to_string().contains("not modified") {
+                            if let Err(e) = manager.poll_provider(idx).await
+                                && !e.to_string().contains("not modified") {
                                     warn!("Config provider {} error: {}", provider_name, e);
                                 }
-                            }
                         }
                         _ = shutdown_rx.recv() => {
                             debug!("Config provider {} polling stopped", provider_name);
@@ -221,7 +219,7 @@ impl ConfigProviderManager {
         let content = provider.fetch().await?;
 
         // Parse the config
-        let new_config: Config = serde_yaml::from_str(&content)
+        let new_config: Config = serde_yml::from_str(&content)
             .map_err(|e| anyhow::anyhow!("Failed to parse config: {}", e))?;
 
         // Validate
@@ -231,8 +229,8 @@ impl ConfigProviderManager {
         // Check if config changed
         let current = self.current_config.read().await;
         let config_changed = current.is_none() || {
-            let current_yaml = serde_yaml::to_string(current.as_ref().unwrap()).unwrap_or_default();
-            let new_yaml = serde_yaml::to_string(&new_config).unwrap_or_default();
+            let current_yaml = serde_yml::to_string(current.as_ref().unwrap()).unwrap_or_default();
+            let new_yaml = serde_yml::to_string(&new_config).unwrap_or_default();
             current_yaml != new_yaml
         };
         drop(current);
@@ -257,7 +255,7 @@ impl ConfigProviderManager {
         for provider in &self.providers {
             match provider.fetch().await {
                 Ok(content) => {
-                    let config: Config = serde_yaml::from_str(&content)?;
+                    let config: Config = serde_yml::from_str(&content)?;
                     config.validate()?;
                     *self.current_config.write().await = Some(config.clone());
                     info!("Initial config loaded from {} provider", provider.name());

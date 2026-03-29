@@ -151,24 +151,22 @@ impl MiddlewareRegistry {
         }
 
         // Strip prefix regex
-        if let Some(strip_regex_config) = &config.strip_prefix_regex {
-            if let Some(strip) = StripPrefixRegexMiddleware::new(strip_regex_config.clone()) {
+        if let Some(strip_regex_config) = &config.strip_prefix_regex
+            && let Some(strip) = StripPrefixRegexMiddleware::new(strip_regex_config.clone()) {
                 return Some(Arc::new(StripPrefixRegexWrapper {
                     name: name.to_string(),
                     inner: strip,
                 }));
             }
-        }
 
         // Replace path regex
-        if let Some(replace_regex_config) = &config.replace_path_regex {
-            if let Some(replace) = ReplacePathRegexMiddleware::new(replace_regex_config.clone()) {
+        if let Some(replace_regex_config) = &config.replace_path_regex
+            && let Some(replace) = ReplacePathRegexMiddleware::new(replace_regex_config.clone()) {
                 return Some(Arc::new(ReplacePathRegexWrapper {
                     name: name.to_string(),
                     inner: replace,
                 }));
             }
-        }
 
         // Compress middleware
         if let Some(compress_config) = &config.compress {
@@ -266,11 +264,10 @@ impl Middleware for RateLimitWrapper {
 
     fn handle<'a>(&'a self, req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
-            if let Some(ip) = get_client_ip(&req) {
-                if !self.inner.is_allowed(ip) {
+            if let Some(ip) = get_client_ip(&req)
+                && !self.inner.is_allowed(ip) {
                     return Ok(error_response(StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded"));
                 }
-            }
             next.run(req).await
         })
     }
@@ -287,15 +284,13 @@ impl Middleware for IpAllowWrapper {
 
     fn handle<'a>(&'a self, req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
-            if self.inner.has_rules() {
-                if let Some(ip) = get_client_ip(&req) {
-                    if !self.inner.is_allowed(ip) {
+            if self.inner.has_rules()
+                && let Some(ip) = get_client_ip(&req)
+                    && !self.inner.is_allowed(ip) {
                         let status = StatusCode::from_u16(self.inner.reject_status_code())
                             .unwrap_or(StatusCode::FORBIDDEN);
                         return Ok(error_response(status, "Forbidden"));
                     }
-                }
-            }
             next.run(req).await
         })
     }
@@ -312,13 +307,11 @@ impl Middleware for IpDenyWrapper {
 
     fn handle<'a>(&'a self, req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
-            if self.inner.has_rules() {
-                if let Some(ip) = get_client_ip(&req) {
-                    if self.inner.is_denied(ip) {
+            if self.inner.has_rules()
+                && let Some(ip) = get_client_ip(&req)
+                    && self.inner.is_denied(ip) {
                         return Ok(error_response(StatusCode::FORBIDDEN, "Forbidden"));
                     }
-                }
-            }
             next.run(req).await
         })
     }

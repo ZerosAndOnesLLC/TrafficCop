@@ -424,11 +424,10 @@ impl Store for LocalStore {
         let now = Instant::now();
 
         // Check if there's an existing leader
-        if let Some(entry) = self.leaders.get(task) {
-            if entry.expires_at > now && entry.node_id != node_id {
+        if let Some(entry) = self.leaders.get(task)
+            && entry.expires_at > now && entry.node_id != node_id {
                 return Ok(false); // Someone else is leader
             }
-        }
 
         // Acquire leadership
         self.leaders.insert(
@@ -443,12 +442,11 @@ impl Store for LocalStore {
     }
 
     async fn leader_release(&self, task: &str, node_id: &str) -> StoreResult<()> {
-        if let Some(entry) = self.leaders.get(task) {
-            if entry.node_id == node_id {
+        if let Some(entry) = self.leaders.get(task)
+            && entry.node_id == node_id {
                 drop(entry);
                 self.leaders.remove(task);
             }
-        }
         Ok(())
     }
 

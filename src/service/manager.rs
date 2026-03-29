@@ -72,8 +72,8 @@ impl ServiceManager {
             let service_name = entry.key().clone();
             let service = entry.value();
 
-            if let Some(lb) = &service.config.load_balancer {
-                if let Some(health_config) = &lb.health_check {
+            if let Some(lb) = &service.config.load_balancer
+                && let Some(health_config) = &lb.health_check {
                     for (idx, server) in lb.servers.iter().enumerate() {
                         let checker = HealthChecker::new(
                             health_config.clone(),
@@ -91,7 +91,6 @@ impl ServiceManager {
                         });
                     }
                 }
-            }
         }
     }
 

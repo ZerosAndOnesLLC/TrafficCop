@@ -2,7 +2,7 @@ use hyper::header::HeaderValue;
 use hyper::HeaderMap;
 
 /// W3C Trace Context for distributed tracing
-/// See: https://www.w3.org/TR/trace-context/
+/// See: <https://www.w3.org/TR/trace-context/>
 #[derive(Debug, Clone)]
 pub struct TraceContext {
     /// Trace ID - 32 hex characters (16 bytes)
@@ -148,26 +148,23 @@ impl Default for TraceContext {
 /// Extract trace context from incoming request headers
 pub fn extract_context(headers: &HeaderMap) -> TraceContext {
     // Try W3C traceparent header first
-    if let Some(traceparent) = headers.get("traceparent") {
-        if let Ok(value) = traceparent.to_str() {
-            if let Some(mut ctx) = TraceContext::parse_traceparent(value) {
+    if let Some(traceparent) = headers.get("traceparent")
+        && let Ok(value) = traceparent.to_str()
+            && let Some(mut ctx) = TraceContext::parse_traceparent(value) {
                 // Also extract tracestate if present
-                if let Some(tracestate) = headers.get("tracestate") {
-                    if let Ok(state) = tracestate.to_str() {
+                if let Some(tracestate) = headers.get("tracestate")
+                    && let Ok(state) = tracestate.to_str() {
                         ctx.trace_state = Some(state.to_string());
                     }
-                }
                 return ctx;
             }
-        }
-    }
 
     // Try B3 propagation format (used by Zipkin)
     if let (Some(trace_id), Some(span_id)) = (
         headers.get("x-b3-traceid"),
         headers.get("x-b3-spanid"),
-    ) {
-        if let (Ok(tid), Ok(sid)) = (trace_id.to_str(), span_id.to_str()) {
+    )
+        && let (Ok(tid), Ok(sid)) = (trace_id.to_str(), span_id.to_str()) {
             let sampled = headers
                 .get("x-b3-sampled")
                 .and_then(|v| v.to_str().ok())
@@ -188,11 +185,10 @@ pub fn extract_context(headers: &HeaderMap) -> TraceContext {
                 trace_state: None,
             };
         }
-    }
 
     // Try Jaeger format
-    if let Some(uber_ctx) = headers.get("uber-trace-id") {
-        if let Ok(value) = uber_ctx.to_str() {
+    if let Some(uber_ctx) = headers.get("uber-trace-id")
+        && let Ok(value) = uber_ctx.to_str() {
             // Format: trace_id:span_id:parent_id:flags
             let parts: Vec<&str> = value.split(':').collect();
             if parts.len() >= 4 {
@@ -215,7 +211,6 @@ pub fn extract_context(headers: &HeaderMap) -> TraceContext {
                 };
             }
         }
-    }
 
     // No trace context found, create new one
     TraceContext::new()
@@ -229,11 +224,10 @@ pub fn inject_context(headers: &mut HeaderMap, ctx: &TraceContext) {
     }
 
     // Inject tracestate if present
-    if let Some(ref state) = ctx.trace_state {
-        if let Ok(value) = HeaderValue::from_str(state) {
+    if let Some(ref state) = ctx.trace_state
+        && let Ok(value) = HeaderValue::from_str(state) {
             headers.insert("tracestate", value);
         }
-    }
 
     // Also inject B3 headers for compatibility
     if let Ok(value) = HeaderValue::from_str(&ctx.trace_id) {

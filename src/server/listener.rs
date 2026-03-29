@@ -191,8 +191,8 @@ impl Listener {
 
             async move {
                 // Check for ACME HTTP-01 challenges first (on non-TLS connections)
-                if !is_tls {
-                    if let Some(response) =
+                if !is_tls
+                    && let Some(response) =
                         try_handle_challenge(&req, &state.acme_challenges).await
                     {
                         // Convert Full<Bytes> to BoxBody
@@ -204,7 +204,6 @@ impl Listener {
                         });
                         return Ok(boxed);
                     }
-                }
 
                 // Inject request context for middleware (remote_addr, is_tls)
                 req.extensions_mut().insert(RequestContext {
