@@ -1,8 +1,10 @@
+//! Prometheus metrics collection for HTTP requests, backend health, and connection tracking.
+
 use metrics::{counter, gauge, histogram, describe_counter, describe_gauge, describe_histogram};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::time::Duration;
 
-/// Initialize metrics with descriptions
+/// Register all metric descriptions with the global recorder.
 pub fn init_metrics() {
     describe_counter!(
         "http_requests_total",
@@ -25,7 +27,7 @@ pub fn init_metrics() {
     describe_gauge!("connection_pool_size", "Size of connection pool");
 }
 
-/// Start Prometheus metrics server on given address
+/// Start a Prometheus HTTP scrape endpoint on the given address.
 pub fn start_metrics_server(addr: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr: std::net::SocketAddr = addr.parse()?;
 
@@ -38,13 +40,14 @@ pub fn start_metrics_server(addr: &str) -> Result<(), Box<dyn std::error::Error 
     Ok(())
 }
 
-/// Get a Prometheus handle for manual scraping
+/// Install the Prometheus recorder and return a handle for manual metric rendering.
 pub fn get_prometheus_handle() -> Result<PrometheusHandle, Box<dyn std::error::Error + Send + Sync>> {
     let handle = PrometheusBuilder::new().install_recorder()?;
     init_metrics();
     Ok(handle)
 }
 
+/// Static helper for recording proxy metrics (requests, backends, connections).
 pub struct Metrics;
 
 impl Metrics {
@@ -109,7 +112,7 @@ impl Metrics {
     }
 }
 
-/// Timer for request duration tracking
+/// Convenience timer that records request duration on drop via `finish()`.
 pub struct RequestTimer {
     start: std::time::Instant,
     entrypoint: String,
@@ -119,6 +122,7 @@ pub struct RequestTimer {
 }
 
 impl RequestTimer {
+    /// Start a new request timer with the given labels.
     pub fn new(entrypoint: &str, router: &str, service: &str, method: &str) -> Self {
         Self {
             start: std::time::Instant::now(),
@@ -129,6 +133,7 @@ impl RequestTimer {
         }
     }
 
+    /// Stop the timer and record the request duration with the given HTTP status.
     pub fn finish(self, status: u16) {
         let duration = self.start.elapsed();
         Metrics::record_request(

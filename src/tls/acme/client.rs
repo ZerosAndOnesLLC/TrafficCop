@@ -13,62 +13,85 @@ use tracing::{debug, info, warn};
 const LETS_ENCRYPT_STAGING: &str = "https://acme-staging-v02.api.letsencrypt.org/directory";
 const LETS_ENCRYPT_PRODUCTION: &str = "https://acme-v02.api.letsencrypt.org/directory";
 
-/// ACME Directory endpoints
+/// ACME directory endpoint URLs fetched from the CA server.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AcmeDirectory {
+    /// URL to obtain a fresh replay nonce.
     pub new_nonce: String,
+    /// URL to create or find an account.
     pub new_account: String,
+    /// URL to submit a new certificate order.
     pub new_order: String,
+    /// URL to revoke an existing certificate.
     #[allow(dead_code)]
     pub revoke_cert: Option<String>,
+    /// URL to change the account key.
     #[allow(dead_code)]
     pub key_change: Option<String>,
 }
 
-/// ACME order status
+/// ACME certificate order with authorization and finalization URLs.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AcmeOrder {
+    /// Current status of the order (e.g. pending, ready, valid).
     pub status: String,
+    /// Expiration timestamp of the order.
     #[allow(dead_code)]
     pub expires: Option<String>,
+    /// Domain identifiers included in this order.
     #[allow(dead_code)]
     pub identifiers: Vec<AcmeIdentifier>,
+    /// URLs for the authorizations that must be completed.
     pub authorizations: Vec<String>,
+    /// URL to finalize the order with a CSR.
     pub finalize: String,
+    /// URL to download the issued certificate, once valid.
     pub certificate: Option<String>,
 }
 
+/// Domain identifier for an ACME order (type + value).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcmeIdentifier {
+    /// Identifier type (e.g. "dns").
     #[serde(rename = "type")]
     pub id_type: String,
+    /// The domain name or identifier value.
     pub value: String,
 }
 
-/// ACME authorization
+/// ACME authorization containing challenges for a domain.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AcmeAuthorization {
+    /// The domain identifier this authorization covers.
     pub identifier: AcmeIdentifier,
+    /// Current status of the authorization.
     pub status: String,
+    /// Available challenges for this authorization.
     pub challenges: Vec<AcmeChallenge>,
 }
 
-/// ACME challenge
+/// A single ACME challenge (HTTP-01, DNS-01, etc.).
 #[derive(Debug, Clone, Deserialize)]
 pub struct AcmeChallenge {
+    /// Challenge type (e.g. "http-01", "dns-01").
     #[serde(rename = "type")]
     pub challenge_type: String,
+    /// URL to POST to when responding to this challenge.
     pub url: String,
+    /// Token used to construct the key authorization.
     pub token: String,
+    /// Current status of the challenge.
     pub status: String,
 }
 
-/// Pending HTTP-01 challenge
+/// An in-progress HTTP-01 challenge awaiting validation.
 #[derive(Debug, Clone)]
 pub struct PendingChallenge {
+    /// The challenge token from the ACME server.
     pub token: String,
+    /// The computed key authorization response.
     pub key_authorization: String,
 }
 
@@ -108,7 +131,7 @@ impl AcmeClient {
         }
     }
 
-    /// Initialize the client - fetch directory and set up account
+    /// Fetch the ACME directory and load or create an account.
     pub async fn init(&mut self) -> Result<()> {
         // Fetch directory
         info!("Fetching ACME directory from {}", self.directory_url);
@@ -137,7 +160,7 @@ impl AcmeClient {
         Ok(())
     }
 
-    /// Get the pending challenges map for the challenge handler
+    /// Get the shared map of pending challenges for the HTTP-01 handler.
     pub fn get_pending_challenges(
         &self,
     ) -> Arc<RwLock<std::collections::HashMap<String, PendingChallenge>>> {
@@ -342,7 +365,7 @@ impl AcmeClient {
         Ok(format!("{}.{}", token, thumbprint_b64))
     }
 
-    /// Order a certificate for the given domains
+    /// Request and obtain a certificate for the given domains via ACME.
     pub async fn order_certificate(&mut self, domains: &[String]) -> Result<StoredCertificate> {
         let directory = self
             .directory

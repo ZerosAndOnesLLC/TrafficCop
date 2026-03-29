@@ -17,6 +17,7 @@ struct WeightedServer {
 }
 
 impl WeightedBalancer {
+    /// Create a weighted balancer from servers with their configured weights.
     pub fn new(servers: Vec<Server>) -> Self {
         let servers: Vec<WeightedServer> = servers
             .into_iter()

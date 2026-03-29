@@ -120,6 +120,7 @@ impl SlidingWindow {
 }
 
 impl PassiveHealthChecker {
+    /// Create a new passive health checker with the given configuration.
     pub fn new(config: PassiveHealthConfig) -> Self {
         Self {
             config,
@@ -127,7 +128,7 @@ impl PassiveHealthChecker {
         }
     }
 
-    /// Check if a backend is healthy
+    /// Returns true if the backend is currently considered healthy.
     pub fn is_healthy(&self, backend_url: &str) -> bool {
         let backends = self.backends.read();
         backends
@@ -136,7 +137,7 @@ impl PassiveHealthChecker {
             .unwrap_or(true)
     }
 
-    /// Check if a backend can be tried (healthy or past recovery interval)
+    /// Returns true if the backend is healthy or its recovery interval has elapsed.
     pub fn can_try(&self, backend_url: &str) -> bool {
         let backends = self.backends.read();
         backends
@@ -286,20 +287,30 @@ impl PassiveHealthChecker {
 /// Result of recording a response
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealthChange {
+    /// Health status did not change.
     NoChange,
+    /// Backend transitioned from unhealthy to healthy.
     BecameHealthy,
+    /// Backend transitioned from healthy to unhealthy.
     BecameUnhealthy,
 }
 
 /// Statistics for a backend
 #[derive(Debug, Clone)]
 pub struct BackendStats {
+    /// Whether the backend is currently healthy.
     pub healthy: bool,
+    /// Total number of requests recorded.
     pub total_requests: u64,
+    /// Total number of failed requests recorded.
     pub total_failures: u64,
+    /// Exponential moving average response time in microseconds.
     pub avg_response_time_us: u64,
+    /// Current streak of consecutive failures.
     pub consecutive_failures: u32,
+    /// Current streak of consecutive successes.
     pub consecutive_successes: u32,
+    /// Number of failures within the sliding window.
     pub recent_failure_count: usize,
 }
 
@@ -309,42 +320,50 @@ pub struct PassiveHealthConfigBuilder {
 }
 
 impl PassiveHealthConfigBuilder {
+    /// Create a new builder with default passive health check settings.
     pub fn new() -> Self {
         Self {
             config: PassiveHealthConfig::default(),
         }
     }
 
+    /// Set the number of consecutive failures before marking unhealthy.
     pub fn failure_threshold(mut self, threshold: u32) -> Self {
         self.config.failure_threshold = threshold;
         self
     }
 
+    /// Set the number of consecutive successes before marking healthy again.
     pub fn success_threshold(mut self, threshold: u32) -> Self {
         self.config.success_threshold = threshold;
         self
     }
 
+    /// Set which HTTP status codes count as failures.
     pub fn failure_status_codes(mut self, codes: impl IntoIterator<Item = u16>) -> Self {
         self.config.failure_status_codes = codes.into_iter().collect();
         self
     }
 
+    /// Set the response time threshold in milliseconds; slower responses count as failures.
     pub fn response_time_threshold_ms(mut self, threshold_ms: u64) -> Self {
         self.config.response_time_threshold_ms = Some(threshold_ms);
         self
     }
 
+    /// Set the sliding window duration for tracking failures.
     pub fn window_duration(mut self, duration: Duration) -> Self {
         self.config.window_duration = duration;
         self
     }
 
+    /// Set how long to wait before retrying an unhealthy backend.
     pub fn recovery_interval(mut self, duration: Duration) -> Self {
         self.config.recovery_interval = duration;
         self
     }
 
+    /// Build the passive health check configuration.
     pub fn build(self) -> PassiveHealthConfig {
         self.config
     }

@@ -35,6 +35,7 @@ struct MirrorEntry {
 }
 
 impl MirroringServiceRouter {
+    /// Create a new mirroring router from the service configuration.
     pub fn new(config: &MirroringService) -> Self {
         let mirrors: Vec<MirrorEntry> = config
             .mirrors

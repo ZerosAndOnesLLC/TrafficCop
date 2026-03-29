@@ -12,6 +12,7 @@ pub struct IpAllowListMiddleware {
 }
 
 impl IpAllowListMiddleware {
+    /// Create from config, parsing CIDR ranges and IP strategy.
     pub fn new(config: &IpAllowListConfig) -> Self {
         let source_range = config
             .source_range
@@ -90,6 +91,7 @@ pub struct IpDenyListMiddleware {
 }
 
 impl IpDenyListMiddleware {
+    /// Create from config, parsing CIDR ranges and IP strategy.
     pub fn new(config: &IpDenyListConfig) -> Self {
         let source_range = config
             .source_range

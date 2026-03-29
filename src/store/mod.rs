@@ -1,7 +1,11 @@
+//! Distributed and local state storage for rate limiting, sessions, health, and cluster coordination.
+
 mod local;
 mod valkey;
 
+/// In-memory store for single-node deployments.
 pub use local::LocalStore;
+/// Valkey/Redis-backed store for distributed multi-node deployments.
 pub use valkey::ValkeyStore;
 
 use async_trait::async_trait;
@@ -15,18 +19,23 @@ pub type StoreResult<T> = Result<T, StoreError>;
 /// Store errors
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
+    /// Failed to connect to the backing store.
     #[error("Connection error: {0}")]
     Connection(String),
 
+    /// The operation timed out.
     #[error("Operation timeout")]
     Timeout,
 
+    /// The requested key was not found.
     #[error("Key not found: {0}")]
     NotFound(String),
 
+    /// Serialization or deserialization failed.
     #[error("Serialization error: {0}")]
     Serialization(String),
 
+    /// The store is not available.
     #[error("Store unavailable")]
     Unavailable,
 }
@@ -34,9 +43,13 @@ pub enum StoreError {
 /// Health status for a backend server
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HealthStatus {
+    /// Whether the backend is currently healthy.
     pub healthy: bool,
-    pub last_check: u64, // Unix timestamp millis
+    /// Unix timestamp in milliseconds of the last health check.
+    pub last_check: u64,
+    /// Number of consecutive failed health checks.
     pub consecutive_failures: u32,
+    /// Error message from the last failure, if any.
     pub last_error: Option<String>,
 }
 
@@ -54,20 +67,31 @@ impl Default for HealthStatus {
 /// Node information for cluster membership
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NodeInfo {
+    /// Unique identifier for this node.
     pub node_id: String,
+    /// Network address of this node.
     pub address: String,
+    /// Current lifecycle status of the node.
     pub status: NodeStatus,
+    /// Number of currently active connections.
     pub active_connections: u64,
-    pub last_heartbeat: u64, // Unix timestamp millis
+    /// Unix timestamp in milliseconds of the last heartbeat.
+    pub last_heartbeat: u64,
+    /// Unix timestamp in milliseconds when the node started.
     pub started_at: u64,
+    /// Software version running on this node.
     pub version: String,
 }
 
+/// Lifecycle status of a cluster node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeStatus {
+    /// Node is accepting and processing requests.
     Active,
+    /// Node is finishing in-flight requests and rejecting new ones.
     Draining,
+    /// Node has been marked unhealthy.
     Unhealthy,
 }
 
@@ -228,7 +252,7 @@ pub trait Store: Send + Sync {
     fn store_type(&self) -> &'static str;
 }
 
-/// Create a store from configuration
+/// Create a store instance from the given configuration.
 pub async fn create_store(config: &StoreConfig) -> StoreResult<Arc<dyn Store>> {
     match config {
         StoreConfig::Local => Ok(Arc::new(LocalStore::new())),
@@ -244,8 +268,10 @@ pub async fn create_store(config: &StoreConfig) -> StoreResult<Arc<dyn Store>> {
 #[serde(rename_all = "camelCase")]
 #[derive(Default)]
 pub enum StoreConfig {
+    /// Use an in-memory local store (single node only).
     #[default]
     Local,
+    /// Use a Valkey/Redis-backed distributed store.
     Valkey(Box<ValkeyConfig>),
 }
 
@@ -311,36 +337,42 @@ fn default_operation_timeout() -> crate::config::Duration {
     crate::config::Duration::from_secs(1)
 }
 
+/// TLS settings for connecting to Valkey/Redis.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ValkeyTlsConfig {
+    /// Path to the CA certificate file.
     #[serde(default)]
     pub ca: Option<String>,
 
+    /// Path to the client certificate file.
     #[serde(default)]
     pub cert: Option<String>,
 
+    /// Path to the client private key file.
     #[serde(default)]
     pub key: Option<String>,
 
+    /// Skip server certificate verification (insecure).
     #[serde(default)]
     pub insecure_skip_verify: bool,
 }
 
+/// Redis Sentinel configuration for high-availability failover.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SentinelConfig {
-    /// Sentinel master name
+    /// Name of the Sentinel master group.
     pub master_name: String,
 
-    /// Sentinel endpoints
+    /// Sentinel node endpoint addresses.
     pub endpoints: Vec<String>,
 
-    /// Sentinel password
+    /// Password for authenticating with Sentinel nodes.
     #[serde(default)]
     pub password: Option<String>,
 }
 
-// Async trait is needed for async methods in traits
+/// Marker trait for async-capable store implementations.
 #[async_trait]
 pub trait AsyncTrait: Send + Sync {}

@@ -13,6 +13,7 @@ pub struct BasicAuthMiddleware {
 }
 
 impl BasicAuthMiddleware {
+    /// Create from config, parsing user:password entries.
     pub fn new(config: BasicAuthConfig) -> Self {
         let users: HashMap<String, String> = config
             .users

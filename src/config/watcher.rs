@@ -1,3 +1,8 @@
+//! File-system watcher for hot config reloading.
+//!
+//! Monitors the config file for changes, debounces events, validates the new
+//! config, and broadcasts it to subscribers via a `tokio::sync::broadcast` channel.
+
 use crate::config::Config;
 use anyhow::Result;
 use notify::{recommended_watcher, Event, EventKind, RecursiveMode, Watcher};

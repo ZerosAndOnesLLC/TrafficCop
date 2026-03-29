@@ -25,6 +25,7 @@ pub struct GrpcWebMiddleware {
 }
 
 impl GrpcWebMiddleware {
+    /// Create from config, compiling origin glob patterns to regexes.
     pub fn new(config: GrpcWebConfig) -> Self {
         let allow_origins = config
             .allow_origins

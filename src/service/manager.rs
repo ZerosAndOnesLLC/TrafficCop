@@ -5,10 +5,12 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use tracing::info;
 
+/// Manages all configured services, their load balancers, and health statuses.
 pub struct ServiceManager {
     services: DashMap<String, ServiceState>,
 }
 
+/// Runtime state for a single service including its config, balancer, and backend health.
 pub struct ServiceState {
     pub config: Service,
     pub balancer: Option<LoadBalancer>,
@@ -16,6 +18,7 @@ pub struct ServiceState {
 }
 
 impl ServiceManager {
+    /// Build the service registry from the full proxy configuration.
     pub fn new(config: &Config) -> Self {
         let services = DashMap::new();
 
@@ -60,6 +63,7 @@ impl ServiceManager {
         Self { services }
     }
 
+    /// Look up a service by name.
     pub fn get_service(
         &self,
         name: &str,
@@ -67,6 +71,7 @@ impl ServiceManager {
         self.services.get(name)
     }
 
+    /// Spawn background health check tasks for all services with health check configs.
     pub fn start_health_checks(&self) {
         for entry in self.services.iter() {
             let service_name = entry.key().clone();

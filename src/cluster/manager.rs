@@ -294,7 +294,7 @@ impl ClusterManager {
     }
 }
 
-/// Cluster statistics
+/// Aggregated cluster statistics across all nodes.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClusterStats {

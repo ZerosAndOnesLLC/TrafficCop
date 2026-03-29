@@ -1,7 +1,11 @@
+//! Cluster coordination: node registration, leader election, health check delegation, and config providers.
+
 mod manager;
 mod provider;
 
+/// Manages node registration, heartbeats, leader election, and graceful draining.
 pub use manager::ClusterManager;
+/// Trait and implementations for fetching configuration from external sources.
 pub use provider::{ConfigProvider, HttpConfigProvider};
 
 use crate::config::{ClusterConfig, StoreConfig as ConfigStoreConfig};

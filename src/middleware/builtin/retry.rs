@@ -10,6 +10,7 @@ pub struct RetryMiddleware {
 }
 
 impl RetryMiddleware {
+    /// Create from config with max attempts and initial backoff interval.
     pub fn new(config: RetryConfig) -> Self {
         Self {
             max_attempts: config.attempts.max(1),
@@ -82,13 +83,14 @@ impl RetryMiddleware {
     }
 }
 
-/// Iterator that yields delays for retry attempts
+/// Iterator that yields exponential backoff delays for each retry attempt.
 pub struct RetryIterator {
     middleware: RetryMiddleware,
     current_attempt: u32,
 }
 
 impl RetryIterator {
+    /// Create from a `RetryMiddleware`, starting at attempt 0.
     pub fn new(middleware: RetryMiddleware) -> Self {
         Self {
             middleware,

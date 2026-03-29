@@ -23,6 +23,7 @@ pub struct AcmeStorage {
     pub certificates: HashMap<String, StoredCertificate>,
 }
 
+/// ACME account credentials and registration info.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcmeAccount {
     /// Account URL from ACME server
@@ -35,6 +36,7 @@ pub struct AcmeAccount {
     pub email: String,
 }
 
+/// A stored TLS certificate with its private key and validity metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredCertificate {
     /// The main domain this certificate is for
@@ -57,7 +59,7 @@ pub struct StoredCertificate {
 }
 
 impl StoredCertificate {
-    /// Check if certificate needs renewal (30 days before expiry)
+    /// Returns true if the certificate expires within 30 days.
     pub fn needs_renewal(&self) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -69,7 +71,7 @@ impl StoredCertificate {
         self.not_after.saturating_sub(thirty_days) < now
     }
 
-    /// Check if certificate is expired
+    /// Returns true if the certificate's not-after date has passed.
     pub fn is_expired(&self) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -78,7 +80,7 @@ impl StoredCertificate {
         self.not_after < now
     }
 
-    /// Parse certificate into rustls format
+    /// Parse the PEM certificate chain into rustls `CertificateDer` format.
     pub fn parse_certificate(&self) -> Result<Vec<CertificateDer<'static>>> {
         let mut reader = BufReader::new(self.certificate_pem.as_bytes());
         let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
@@ -87,7 +89,7 @@ impl StoredCertificate {
         Ok(certs)
     }
 
-    /// Parse private key into rustls format
+    /// Parse the PEM private key into rustls `PrivateKeyDer` format.
     pub fn parse_private_key(&self) -> Result<PrivateKeyDer<'static>> {
         let mut reader = BufReader::new(self.private_key_pem.as_bytes());
         let key = rustls_pemfile::private_key(&mut reader)

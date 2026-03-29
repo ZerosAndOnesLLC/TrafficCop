@@ -16,6 +16,7 @@ pub struct FailoverServiceRouter {
 }
 
 impl FailoverServiceRouter {
+    /// Create a new failover router from the service configuration.
     pub fn new(config: &FailoverService) -> Self {
         Self {
             primary: config.service.clone(),

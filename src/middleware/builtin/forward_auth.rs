@@ -18,6 +18,7 @@ pub struct ForwardAuthMiddleware {
 }
 
 impl ForwardAuthMiddleware {
+    /// Create from config, building an HTTP client for the external auth service.
     pub fn new(config: ForwardAuthConfig) -> Option<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))

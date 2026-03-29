@@ -10,7 +10,7 @@ pub struct UdpServiceManager {
     services: HashMap<String, Arc<UdpService>>,
 }
 
-/// A UDP service with load balancing
+/// A UDP service with round-robin load balancing across backends.
 pub struct UdpService {
     name: String,
     servers: Vec<UdpBackendServer>,
@@ -67,7 +67,7 @@ impl UdpServiceManager {
         self.services.get(name).cloned()
     }
 
-    /// Get all service names
+    /// Iterate over all registered service names.
     pub fn service_names(&self) -> impl Iterator<Item = &String> {
         self.services.keys()
     }
@@ -161,7 +161,7 @@ impl UdpService {
         self.healthy.read().iter().filter(|&&h| h).count()
     }
 
-    /// Get service name
+    /// Get the service name.
     pub fn name(&self) -> &str {
         &self.name
     }

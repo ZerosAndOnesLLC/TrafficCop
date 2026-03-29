@@ -9,6 +9,7 @@ pub struct ChainMiddleware {
 }
 
 impl ChainMiddleware {
+    /// Create from config with the list of middleware names to compose.
     pub fn new(config: ChainConfig) -> Self {
         Self {
             middlewares: config.middlewares,

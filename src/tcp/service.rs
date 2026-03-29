@@ -10,7 +10,7 @@ pub struct TcpServiceManager {
     services: HashMap<String, Arc<TcpService>>,
 }
 
-/// A TCP service with load balancing
+/// A TCP service with round-robin load balancing across backends.
 pub struct TcpService {
     name: String,
     servers: Vec<TcpBackendServer>,

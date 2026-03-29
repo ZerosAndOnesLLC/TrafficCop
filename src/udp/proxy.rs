@@ -385,7 +385,7 @@ impl UdpProxy {
         }
     }
 
-    /// Get metrics
+    /// Get current proxy statistics.
     pub fn metrics(&self) -> UdpProxyStats {
         UdpProxyStats {
             packets_received: self.packets_received.load(Ordering::Relaxed),
@@ -405,7 +405,7 @@ struct UdpProxyMetrics {
     bytes_sent: AtomicU64,
 }
 
-/// UDP proxy statistics
+/// Runtime statistics for the UDP proxy.
 #[derive(Debug, Clone)]
 pub struct UdpProxyStats {
     pub packets_received: u64,

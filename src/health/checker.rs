@@ -11,6 +11,7 @@ use std::time::Duration;
 use tokio::time::{interval, timeout};
 use tracing::{debug, warn};
 
+/// Active HTTP health checker that periodically polls a backend server.
 pub struct HealthChecker {
     config: HealthCheck,
     server_url: String,
@@ -23,6 +24,7 @@ pub struct HealthChecker {
 }
 
 impl HealthChecker {
+    /// Create a new health checker for the given backend server.
     pub fn new(config: HealthCheck, server_url: String, status: Arc<HealthStatus>) -> Self {
         let connector = HttpConnector::new();
         let client = Client::builder(TokioExecutor::new())
@@ -57,6 +59,7 @@ impl HealthChecker {
         }
     }
 
+    /// Run the health check loop until the task is cancelled.
     pub async fn start(self) {
         let interval_duration = self.config.interval.as_std();
         let check_timeout = self.config.timeout.as_std();

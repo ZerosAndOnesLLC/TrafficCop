@@ -27,6 +27,7 @@ impl StatusRange {
 }
 
 impl ErrorsMiddleware {
+    /// Create from config, parsing status code ranges to intercept.
     pub fn new(config: ErrorsConfig) -> Self {
         let status_ranges = config
             .status

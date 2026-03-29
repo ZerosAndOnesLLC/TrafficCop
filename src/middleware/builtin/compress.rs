@@ -10,14 +10,19 @@ pub struct CompressMiddleware {
     min_size: u64,
 }
 
+/// Supported response compression algorithms.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CompressionAlgorithm {
+    /// Gzip compression (RFC 1952).
     Gzip,
+    /// Brotli compression (RFC 7932).
     Brotli,
+    /// No compression applied.
     None,
 }
 
 impl CompressMiddleware {
+    /// Create from config with the minimum response size threshold.
     pub fn new(config: CompressConfig) -> Self {
         Self {
             min_size: config.min_response_body_bytes,

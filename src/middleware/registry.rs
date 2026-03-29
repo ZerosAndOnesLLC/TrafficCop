@@ -19,7 +19,9 @@ use tracing::{debug, warn};
 /// Request context injected via request extensions before middleware chain runs
 #[derive(Clone)]
 pub struct RequestContext {
+    /// The client's socket address.
     pub remote_addr: SocketAddr,
+    /// Whether the connection arrived over TLS.
     pub is_tls: bool,
 }
 
@@ -182,6 +184,7 @@ impl MiddlewareRegistry {
 
 // --- Wrapper implementations ---
 
+/// Build a plain-text error response with the given status code and message.
 fn error_response(status: StatusCode, msg: &str) -> Response<BoxBody<Bytes, hyper::Error>> {
     Response::builder()
         .status(status)
@@ -194,6 +197,7 @@ fn error_response(status: StatusCode, msg: &str) -> Response<BoxBody<Bytes, hype
         .unwrap()
 }
 
+/// Extract the client IP from the request's [`RequestContext`] extension.
 fn get_client_ip(req: &Request<Incoming>) -> Option<IpAddr> {
     req.extensions()
         .get::<RequestContext>()

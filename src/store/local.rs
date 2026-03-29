@@ -69,6 +69,7 @@ struct LeaderEntry {
 }
 
 impl LocalStore {
+    /// Create a new in-memory local store with empty state.
     pub fn new() -> Self {
         let (config_tx, _) = broadcast::channel(16);
         let (health_tx, _) = broadcast::channel(256);

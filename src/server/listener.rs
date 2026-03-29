@@ -16,6 +16,7 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor as TokioTlsAcceptor;
 use tracing::{debug, error, info};
 
+/// TCP/TLS listener for a single entrypoint, handling HTTP/1.1 and HTTP/2 connections.
 pub struct Listener {
     name: Arc<str>,
     entrypoint: EntryPoint,
@@ -25,6 +26,7 @@ pub struct Listener {
 }
 
 impl Listener {
+    /// Create a listener for the given entrypoint, optionally with TLS.
     pub fn new(
         name: String,
         entrypoint: EntryPoint,
@@ -92,6 +94,7 @@ impl Listener {
         None
     }
 
+    /// Bind and accept connections in a loop until the server drains.
     pub async fn serve(&self) -> Result<()> {
         let addr: SocketAddr = self
             .entrypoint

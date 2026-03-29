@@ -96,6 +96,7 @@ pub struct AccessLogBuilder {
 }
 
 impl AccessLogBuilder {
+    /// Start building a log entry, capturing the current instant for duration measurement.
     pub fn new(remote_addr: SocketAddr, method: &str, path: &str, protocol: &str) -> Self {
         Self {
             start: Instant::now(),
@@ -113,36 +114,43 @@ impl AccessLogBuilder {
         }
     }
 
+    /// Set the query string.
     pub fn query(mut self, query: Option<&str>) -> Self {
         self.query = query.map(|s| s.to_string());
         self
     }
 
+    /// Set the Host header value.
     pub fn host(mut self, host: Option<&str>) -> Self {
         self.host = host.map(|s| s.to_string());
         self
     }
 
+    /// Set the User-Agent header value.
     pub fn user_agent(mut self, ua: Option<&str>) -> Self {
         self.user_agent = ua.map(|s| s.to_string());
         self
     }
 
+    /// Set the Referer header value.
     pub fn referer(mut self, referer: Option<&str>) -> Self {
         self.referer = referer.map(|s| s.to_string());
         self
     }
 
+    /// Set the X-Forwarded-For value.
     pub fn forwarded_for(mut self, xff: Option<&str>) -> Self {
         self.forwarded_for = xff.map(|s| s.to_string());
         self
     }
 
+    /// Set the request ID for correlation.
     pub fn request_id(mut self, id: Option<&str>) -> Self {
         self.request_id = id.map(|s| s.to_string());
         self
     }
 
+    /// Set whether the connection is TLS-terminated.
     pub fn tls(mut self, is_tls: bool) -> Self {
         self.is_tls = is_tls;
         self

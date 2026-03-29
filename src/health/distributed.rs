@@ -207,6 +207,7 @@ pub struct DistributedHealthManager {
 }
 
 impl DistributedHealthManager {
+    /// Create a new distributed health manager.
     pub fn new(store: Arc<dyn Store>, is_leader: Arc<AtomicBool>, node_id: String) -> Self {
         Self {
             store,

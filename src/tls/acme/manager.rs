@@ -45,7 +45,7 @@ impl AcmeManager {
         })
     }
 
-    /// Get the certificate resolver for TLS
+    /// Get the certificate resolver for use in TLS server config.
     pub fn get_resolver(&self) -> Arc<CertificateResolver> {
         Arc::clone(&self.resolver)
     }
@@ -57,7 +57,7 @@ impl AcmeManager {
         Arc::clone(&self.pending_challenges)
     }
 
-    /// Request a certificate for the given domains
+    /// Order and store a new certificate for the given domains.
     pub async fn obtain_certificate(&self, domains: &[String]) -> Result<()> {
         info!("Requesting certificate for domains: {:?}", domains);
 
@@ -70,7 +70,7 @@ impl AcmeManager {
         Ok(())
     }
 
-    /// Ensure certificates exist for all configured domains
+    /// Ensure valid certificates exist for all domain sets, obtaining or renewing as needed.
     pub async fn ensure_certificates(&self, domains: &[Vec<String>]) -> Result<()> {
         for domain_set in domains {
             if domain_set.is_empty() {
@@ -97,7 +97,7 @@ impl AcmeManager {
         Ok(())
     }
 
-    /// Start the automatic renewal background task
+    /// Spawn a background task that periodically checks and renews expiring certificates.
     pub fn start_renewal_task(self: Arc<Self>) {
         tokio::spawn(async move {
             loop {
@@ -127,7 +127,7 @@ impl AcmeManager {
     }
 }
 
-/// Builder for AcmeManager with options
+/// Builder for configuring and initializing an `AcmeManager`.
 pub struct AcmeManagerBuilder {
     storage_path: String,
     email: String,
@@ -136,6 +136,7 @@ pub struct AcmeManagerBuilder {
 }
 
 impl AcmeManagerBuilder {
+    /// Create a new builder with the given email and storage path.
     pub fn new(email: &str, storage_path: &str) -> Self {
         Self {
             storage_path: storage_path.to_string(),
@@ -165,13 +166,13 @@ impl AcmeManagerBuilder {
         self
     }
 
-    /// Add domains to manage
+    /// Add a set of domains to manage certificates for.
     pub fn domain(mut self, domains: Vec<String>) -> Self {
         self.domains.push(domains);
         self
     }
 
-    /// Build and initialize the ACME manager
+    /// Build, initialize, and start the ACME manager with certificate renewal.
     pub async fn build(self) -> Result<Arc<AcmeManager>> {
         let manager = AcmeManager::new(
             &self.storage_path,

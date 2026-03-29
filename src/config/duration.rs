@@ -1,3 +1,7 @@
+//! Go-style duration type with serde support.
+//!
+//! Parses strings like "300ms", "1.5s", "2m", "1h30m" and integer/float seconds.
+
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
@@ -9,28 +13,35 @@ use std::time::Duration as StdDuration;
 pub struct Duration(StdDuration);
 
 impl Duration {
+    /// Zero duration constant.
     pub const ZERO: Duration = Duration(StdDuration::ZERO);
 
+    /// Create a duration from milliseconds.
     pub fn from_millis(millis: u64) -> Self {
         Duration(StdDuration::from_millis(millis))
     }
 
+    /// Create a duration from whole seconds.
     pub fn from_secs(secs: u64) -> Self {
         Duration(StdDuration::from_secs(secs))
     }
 
+    /// Return the total number of milliseconds.
     pub fn as_millis(&self) -> u128 {
         self.0.as_millis()
     }
 
+    /// Return the total number of whole seconds.
     pub fn as_secs(&self) -> u64 {
         self.0.as_secs()
     }
 
+    /// Convert to a standard library `Duration`.
     pub fn as_std(&self) -> StdDuration {
         self.0
     }
 
+    /// Returns true if this is a zero-length duration.
     pub fn is_zero(&self) -> bool {
         self.0.is_zero()
     }
@@ -48,6 +59,7 @@ impl From<Duration> for StdDuration {
     }
 }
 
+/// Error returned when a duration string cannot be parsed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseDurationError(String);
 

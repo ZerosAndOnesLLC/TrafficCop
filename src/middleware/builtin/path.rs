@@ -9,6 +9,7 @@ pub struct StripPrefixMiddleware {
 }
 
 impl StripPrefixMiddleware {
+    /// Create from config with the list of prefixes to strip.
     pub fn new(config: StripPrefixConfig) -> Self {
         Self {
             prefixes: config.prefixes,
@@ -51,6 +52,7 @@ pub struct StripPrefixRegexMiddleware {
 }
 
 impl StripPrefixRegexMiddleware {
+    /// Create from config. Returns `None` if any regex pattern is invalid.
     pub fn new(config: StripPrefixRegexConfig) -> Option<Self> {
         let patterns: Result<Vec<Regex>, _> = config
             .regex
@@ -94,6 +96,7 @@ pub struct AddPrefixMiddleware {
 }
 
 impl AddPrefixMiddleware {
+    /// Create from config with the prefix to prepend.
     pub fn new(config: AddPrefixConfig) -> Self {
         Self {
             prefix: config.prefix,
@@ -114,6 +117,7 @@ pub struct ReplacePathMiddleware {
 }
 
 impl ReplacePathMiddleware {
+    /// Create from config with the replacement path.
     pub fn new(config: ReplacePathConfig) -> Self {
         Self {
             path: config.path,
@@ -135,6 +139,7 @@ pub struct ReplacePathRegexMiddleware {
 }
 
 impl ReplacePathRegexMiddleware {
+    /// Create from config. Returns `None` if the regex pattern is invalid.
     pub fn new(config: ReplacePathRegexConfig) -> Option<Self> {
         Regex::new(&config.regex).ok().map(|pattern| Self {
             pattern,

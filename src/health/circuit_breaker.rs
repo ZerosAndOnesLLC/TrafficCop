@@ -4,9 +4,12 @@ use std::time::{Duration, Instant};
 /// Circuit breaker states
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CircuitState {
-    Closed,   // Normal operation
-    Open,     // Failing, reject requests
-    HalfOpen, // Testing if service recovered
+    /// Normal operation, requests flow through.
+    Closed,
+    /// Failing, all requests are rejected.
+    Open,
+    /// Testing whether the service has recovered.
+    HalfOpen,
 }
 
 /// High-performance circuit breaker using atomics
@@ -23,6 +26,7 @@ pub struct CircuitBreaker {
 }
 
 impl CircuitBreaker {
+    /// Create a circuit breaker with the given failure threshold and recovery timeout.
     pub fn new(failure_threshold: u32, recovery_timeout: Duration) -> Self {
         Self {
             failure_threshold,
@@ -35,6 +39,7 @@ impl CircuitBreaker {
         }
     }
 
+    /// Get the current circuit state, auto-transitioning from open to half-open on timeout.
     #[inline]
     pub fn state(&self) -> CircuitState {
         match self.state.load(Ordering::Relaxed) {

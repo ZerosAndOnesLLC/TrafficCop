@@ -14,18 +14,19 @@ pub struct ChallengeHandler {
 }
 
 impl ChallengeHandler {
+    /// Create a handler backed by the given pending challenges map.
     pub fn new(pending: Arc<RwLock<HashMap<String, PendingChallenge>>>) -> Self {
         Self { pending }
     }
 
-    /// Check if this request is an ACME challenge
+    /// Returns true if the request path matches `/.well-known/acme-challenge/`.
     pub fn is_challenge_request<B>(req: &Request<B>) -> bool {
         req.uri()
             .path()
             .starts_with("/.well-known/acme-challenge/")
     }
 
-    /// Handle an ACME challenge request
+    /// Respond to an ACME challenge request with the key authorization, if known.
     pub async fn handle<B>(
         &self,
         req: &Request<B>,

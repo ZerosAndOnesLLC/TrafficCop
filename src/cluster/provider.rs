@@ -131,7 +131,7 @@ impl ConfigProvider for HttpConfigProvider {
     }
 }
 
-/// Configuration provider manager
+/// Manages multiple config providers, polling for updates and notifying on changes.
 #[allow(dead_code, clippy::type_complexity)]
 pub struct ConfigProviderManager {
     providers: Vec<Box<dyn ConfigProvider>>,

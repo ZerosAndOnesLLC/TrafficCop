@@ -10,6 +10,7 @@ pub struct RedirectSchemeMiddleware {
 }
 
 impl RedirectSchemeMiddleware {
+    /// Create from config with target scheme, permanence, and optional port override.
     pub fn new(config: RedirectSchemeConfig) -> Self {
         // Parse port from string to u16
         let port = config.port.as_ref().and_then(|p| p.parse::<u16>().ok());

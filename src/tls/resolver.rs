@@ -27,6 +27,7 @@ pub struct CertificateResolver {
 }
 
 impl CertificateResolver {
+    /// Create an empty certificate resolver.
     pub fn new() -> Self {
         Self {
             static_certs: HashMap::new(),
@@ -119,7 +120,7 @@ impl CertificateResolver {
         self.default_cert = Some(cert);
     }
 
-    /// Refresh ACME certificate cache
+    /// Reload all ACME certificates from storage into the in-memory cache.
     pub fn refresh_acme_cache(&self) {
         if let Some(ref storage) = self.acme_storage {
             let certs = storage.get_all_certificates();

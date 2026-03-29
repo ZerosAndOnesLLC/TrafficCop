@@ -1,12 +1,19 @@
+//! TLS termination, mTLS client auth, SNI-based certificate resolution, and ACME automation.
+
+/// ACME (Let's Encrypt) certificate automation.
 pub mod acme;
+/// Mutual TLS client certificate authentication.
 pub mod mtls;
 mod resolver;
 
+/// Re-exports from the ACME submodule for certificate automation.
 pub use acme::{
     try_handle_challenge, AcmeClient, AcmeManager, AcmeManagerBuilder, ChallengeHandler,
     PendingChallenge, StorageManager, StoredCertificate,
 };
+/// Re-exports for mutual TLS client authentication.
 pub use mtls::{ClientAuthMode, ClientCertInfo, MtlsConfigBuilder};
+/// SNI-based certificate resolver with static, ACME, and wildcard support.
 pub use resolver::CertificateResolver;
 
 use crate::config::TlsConfig;
@@ -19,11 +26,13 @@ use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
 
+/// Wraps a rustls `ServerConfig` for accepting TLS connections.
 pub struct TlsAcceptor {
     config: Arc<ServerConfig>,
 }
 
 impl TlsAcceptor {
+    /// Build a TLS acceptor from config, returning None if no certificates are configured.
     pub fn from_config(tls_config: &TlsConfig) -> Result<Option<Self>> {
         if tls_config.certificates.is_empty() {
             return Ok(None);
@@ -38,6 +47,7 @@ impl TlsAcceptor {
     }
 
 
+    /// Build a TLS acceptor from certificate and key PEM files.
     pub fn from_files(cert_path: &str, key_path: &str) -> Result<Self> {
         let config = Self::build_server_config(cert_path, key_path)?;
 
@@ -86,6 +96,7 @@ impl TlsAcceptor {
         Ok(config)
     }
 
+    /// Get a clone of the underlying server config.
     pub fn get_config(&self) -> Arc<ServerConfig> {
         Arc::clone(&self.config)
     }

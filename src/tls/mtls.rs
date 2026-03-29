@@ -38,13 +38,14 @@ impl std::str::FromStr for ClientAuthMode {
     }
 }
 
-/// mTLS configuration builder
+/// Builder for constructing `ServerConfig` with mutual TLS client authentication.
 pub struct MtlsConfigBuilder {
     client_auth_mode: ClientAuthMode,
     ca_certs: Vec<CertificateDer<'static>>,
 }
 
 impl MtlsConfigBuilder {
+    /// Create a new builder defaulting to no client certificate requirement.
     pub fn new() -> Self {
         Self {
             client_auth_mode: ClientAuthMode::NoClientCert,
@@ -203,7 +204,7 @@ fn load_certs(path: &str) -> Result<Vec<CertificateDer<'static>>> {
     Ok(certs)
 }
 
-/// Extract client certificate info from a TLS connection
+/// Parsed client certificate information from a TLS connection.
 pub struct ClientCertInfo {
     /// The client certificate chain (DER encoded)
     pub chain: Vec<Vec<u8>>,

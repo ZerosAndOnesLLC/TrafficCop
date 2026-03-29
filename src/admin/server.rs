@@ -17,6 +17,7 @@ pub struct AdminServer {
 }
 
 impl AdminServer {
+    /// Create a new admin server bound to the given address.
     pub fn new(api: AdminApi, address: SocketAddr) -> Self {
         Self {
             api: Arc::new(api),

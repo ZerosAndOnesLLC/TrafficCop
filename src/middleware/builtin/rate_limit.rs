@@ -108,6 +108,7 @@ impl TokenBucket {
 }
 
 impl RateLimitMiddleware {
+    /// Create a local-only rate limiter from config.
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
             config,
@@ -293,6 +294,7 @@ pub struct DistributedRateLimiter {
 
 #[allow(dead_code)]
 impl DistributedRateLimiter {
+    /// Create a distributed rate limiter backed by the given store.
     pub fn new(store: Arc<dyn Store>, limit: u64, window_secs: u64) -> Self {
         Self {
             store,

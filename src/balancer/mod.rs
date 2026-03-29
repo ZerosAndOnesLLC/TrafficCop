@@ -1,3 +1,5 @@
+//! Load balancing strategies for distributing traffic across backend servers.
+
 mod least_conn;
 mod random;
 mod round_robin;
@@ -12,22 +14,30 @@ pub use weighted::WeightedBalancer;
 
 use crate::config::{LoadBalancerService, Server, Service};
 
+/// Trait for load balancing strategies with health-aware server selection.
 pub trait Balancer: Send + Sync {
+    /// Select the next healthy server, or `None` if no servers exist.
     fn next_server(&self) -> Option<&Server>;
+    /// Mark a server at the given index as healthy.
     fn mark_healthy(&self, index: usize);
+    /// Mark a server at the given index as unhealthy.
     fn mark_unhealthy(&self, index: usize);
+    /// Find a server's index by its URL.
     fn find_server_index(&self, url: &str) -> Option<usize>;
 }
 
+/// Wraps a strategy-specific balancer with automatic strategy selection from config.
 pub struct LoadBalancer {
     strategy: Box<dyn Balancer>,
 }
 
 impl LoadBalancer {
+    /// Create a load balancer from a service config, returns `None` if no LB config is present.
     pub fn new(service: &Service) -> Option<Self> {
         service.load_balancer.as_ref().map(Self::from_load_balancer)
     }
 
+    /// Build a balancer from LB config, choosing weighted or round-robin based on server weights.
     pub fn from_load_balancer(lb: &LoadBalancerService) -> Self {
         // Determine strategy based on server weights
         // If all weights are equal, use round robin; otherwise use weighted
@@ -57,19 +67,23 @@ impl LoadBalancer {
         Self { strategy }
     }
 
+    /// Select the next backend server according to the active strategy.
     #[inline]
     pub fn next_server(&self) -> Option<&Server> {
         self.strategy.next_server()
     }
 
+    /// Mark a server as healthy by index.
     pub fn mark_healthy(&self, index: usize) {
         self.strategy.mark_healthy(index);
     }
 
+    /// Mark a server as unhealthy by index.
     pub fn mark_unhealthy(&self, index: usize) {
         self.strategy.mark_unhealthy(index);
     }
 
+    /// Find a server's index by its URL.
     pub fn find_server_index(&self, url: &str) -> Option<usize> {
         self.strategy.find_server_index(url)
     }

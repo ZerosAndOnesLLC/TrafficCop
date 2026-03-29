@@ -1,9 +1,18 @@
+//! Configuration module for TrafficCop.
+//!
+//! Handles YAML config loading, validation, and file watching for hot reloads.
+//! Config format is compatible with Traefik's YAML configuration.
+
+/// Go-style duration parsing (e.g., "30s", "1m30s", "100ms").
 pub mod duration;
 mod types;
+/// File-system watcher for automatic config reloading on changes.
 pub mod watcher;
 
+/// Re-exported duration type for config fields.
 pub use duration::Duration;
 pub use types::*;
+/// Re-exported config watcher types.
 pub use watcher::{watch_config_async, ConfigWatcher};
 
 use anyhow::{Context, Result};
@@ -11,6 +20,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 impl Config {
+    /// Load, parse, and validate a YAML config file from the given path.
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {:?}", path))?;
@@ -141,6 +151,7 @@ impl Config {
         self.udp.as_ref().map(|u| !u.routers.is_empty()).unwrap_or(false)
     }
 
+    /// Validate all config references (routers -> services -> middlewares -> entrypoints).
     pub fn validate(&self) -> Result<()> {
         // Validate entrypoints
         if self.entry_points.is_empty() {

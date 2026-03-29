@@ -1,7 +1,11 @@
+//! Server lifecycle management including TCP/TLS listeners, UDP listeners, and graceful shutdown.
+
 mod listener;
 mod udp_listener;
 
+/// TCP/TLS listener for HTTP and HTTPS entrypoints.
 pub use listener::Listener;
+/// UDP listener for UDP-based entrypoints.
 pub use udp_listener::UdpListener;
 
 use crate::config::{watch_config_async, Config};
@@ -30,6 +34,7 @@ pub struct ConnectionTracker {
 }
 
 impl ConnectionTracker {
+    /// Create a new tracker with zero active connections.
     pub fn new() -> Self {
         Self {
             active: AtomicUsize::new(0),
@@ -103,10 +108,15 @@ impl Default for ConnectionTracker {
 
 /// Shared state that can be hot-reloaded
 pub struct SharedState {
+    /// The current request router (hot-swappable).
     pub router: ArcSwap<Router>,
+    /// The current service manager (hot-swappable).
     pub services: ArcSwap<ServiceManager>,
+    /// The current middleware registry (hot-swappable).
     pub middlewares: ArcSwap<MiddlewareRegistry>,
+    /// Passive health checker shared across all request paths.
     pub passive_health: Arc<PassiveHealthChecker>,
+    /// Tracks active connections for graceful drain.
     pub connections: ConnectionTracker,
     /// Pending ACME challenges for HTTP-01 validation
     pub acme_challenges: Arc<RwLock<HashMap<String, PendingChallenge>>>,
@@ -115,6 +125,7 @@ pub struct SharedState {
 }
 
 impl SharedState {
+    /// Build shared state from config without ACME support.
     pub fn new(config: &Config) -> Self {
         Self {
             router: ArcSwap::from_pointee(Router::from_config(config)),
@@ -140,7 +151,7 @@ impl SharedState {
         }
     }
 
-    /// Reload state from new config
+    /// Hot-reload router, services, and middleware from updated config.
     pub fn reload(&self, config: &Config) {
         let new_router = Router::from_config(config);
         let new_services = ServiceManager::new(config);
@@ -154,6 +165,7 @@ impl SharedState {
     }
 }
 
+/// Top-level server that binds entrypoints, manages config hot-reload, and handles graceful shutdown.
 pub struct Server {
     config_path: PathBuf,
     config: Arc<ArcSwap<Config>>,
@@ -164,10 +176,12 @@ pub struct Server {
 }
 
 impl Server {
+    /// Create a server with default config path.
     pub fn new(config: Config) -> Self {
         Self::with_path(config, PathBuf::from("config.yaml"))
     }
 
+    /// Create a server with an explicit config file path for hot-reload watching.
     pub fn with_path(config: Config, config_path: PathBuf) -> Self {
         let state = Arc::new(SharedState::new(&config));
         let config = Arc::new(ArcSwap::from_pointee(config));
@@ -201,6 +215,7 @@ impl Server {
         }
     }
 
+    /// Start all listeners, config watcher, and block until shutdown signal.
     pub async fn run(&self) -> Result<()> {
         // Start health checks for all services
         self.state.services.load().start_health_checks();
@@ -326,6 +341,7 @@ impl Server {
         Ok(())
     }
 
+    /// Manually reload configuration (validates before applying).
     pub fn reload_config(&self, config: Config) -> Result<()> {
         config.validate()?;
         self.config.store(Arc::new(config.clone()));

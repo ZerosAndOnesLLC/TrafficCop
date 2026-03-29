@@ -18,6 +18,7 @@ pub struct DigestAuthMiddleware {
 }
 
 impl DigestAuthMiddleware {
+    /// Create from config, precomputing HA1 hashes for each user.
     pub fn new(config: DigestAuthConfig) -> Self {
         let realm = config.realm.unwrap_or_else(|| "Restricted".to_string());
 

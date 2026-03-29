@@ -2,6 +2,7 @@ use super::Balancer;
 use crate::config::Server;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+/// Round-robin load balancer that cycles through healthy servers sequentially.
 pub struct RoundRobinBalancer {
     servers: Vec<Server>,
     healthy: Vec<AtomicBool>,
@@ -9,6 +10,7 @@ pub struct RoundRobinBalancer {
 }
 
 impl RoundRobinBalancer {
+    /// Create a round-robin balancer with all servers initially healthy.
     pub fn new(servers: Vec<Server>) -> Self {
         let healthy = servers.iter().map(|_| AtomicBool::new(true)).collect();
         Self {

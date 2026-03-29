@@ -21,6 +21,7 @@ pub struct AdminApi {
 }
 
 impl AdminApi {
+    /// Create a new admin API with access to config, router, and service state.
     pub fn new(
         config: Arc<Config>,
         router: Arc<Router>,
@@ -35,6 +36,7 @@ impl AdminApi {
         }
     }
 
+    /// Attach a health checker for backend health reporting.
     pub fn with_health_checker(mut self, checker: Arc<HealthChecker>) -> Self {
         self._health_checker = Some(checker);
         self

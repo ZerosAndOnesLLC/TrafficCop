@@ -16,6 +16,7 @@ struct WeightedServiceEntry {
 }
 
 impl WeightedServiceRouter {
+    /// Create a new weighted router from the service configuration.
     pub fn new(config: &WeightedService) -> Self {
         let services: Vec<WeightedServiceEntry> = config
             .services

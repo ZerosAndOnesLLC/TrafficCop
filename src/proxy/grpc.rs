@@ -1,3 +1,5 @@
+//! gRPC and gRPC-Web request handling utilities.
+
 use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::header::{HeaderName, HeaderValue, CONTENT_TYPE};
@@ -31,30 +33,48 @@ pub fn is_grpc_web_request(req: &Request<Incoming>) -> bool {
         .unwrap_or(false)
 }
 
-/// gRPC status codes
+/// Standard gRPC status codes mapped to their numeric values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum GrpcStatus {
+    /// The operation completed successfully.
     Ok = 0,
+    /// The operation was cancelled by the caller.
     Cancelled = 1,
+    /// An unknown error occurred.
     Unknown = 2,
+    /// The client sent an invalid argument.
     InvalidArgument = 3,
+    /// The deadline expired before the operation completed.
     DeadlineExceeded = 4,
+    /// The requested entity was not found.
     NotFound = 5,
+    /// The entity already exists.
     AlreadyExists = 6,
+    /// The caller lacks permission for this operation.
     PermissionDenied = 7,
+    /// A resource has been exhausted (e.g., rate limit).
     ResourceExhausted = 8,
+    /// A precondition for the operation was not met.
     FailedPrecondition = 9,
+    /// The operation was aborted due to a conflict.
     Aborted = 10,
+    /// The operation was attempted past the valid range.
     OutOfRange = 11,
+    /// The operation is not implemented or supported.
     Unimplemented = 12,
+    /// An internal server error occurred.
     Internal = 13,
+    /// The service is currently unavailable.
     Unavailable = 14,
+    /// Unrecoverable data loss or corruption.
     DataLoss = 15,
+    /// The request lacks valid authentication credentials.
     Unauthenticated = 16,
 }
 
 impl GrpcStatus {
+    /// Return the canonical string name for this gRPC status code.
     pub fn as_str(&self) -> &'static str {
         match self {
             GrpcStatus::Ok => "OK",

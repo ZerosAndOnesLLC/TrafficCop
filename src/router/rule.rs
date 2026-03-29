@@ -1,35 +1,55 @@
+//! Rule AST and recursive-descent parser for Traefik-style routing rules.
+
 use regex::Regex;
 use thiserror::Error;
 
+/// Errors produced when parsing a routing rule string.
 #[derive(Debug, Error)]
 pub enum RuleParseError {
+    /// The rule string has invalid syntax.
     #[error("Invalid rule syntax: {0}")]
     InvalidSyntax(String),
 
+    /// A regex pattern in the rule is invalid.
     #[error("Invalid regex pattern: {0}")]
     InvalidRegex(#[from] regex::Error),
 
+    /// The rule references an unknown matcher function.
     #[error("Unknown function: {0}")]
     UnknownFunction(String),
 }
 
+/// AST node representing a routing rule (host, path, header, query, method, or boolean combinator).
 #[derive(Debug, Clone)]
 pub enum Rule {
+    /// Match requests by exact hostname.
     Host(String),
+    /// Match requests by hostname regex.
     HostRegex(Regex),
+    /// Match requests by exact path.
     Path(String),
+    /// Match requests whose path starts with a prefix.
     PathPrefix(String),
+    /// Match requests by path regex.
     PathRegex(Regex),
+    /// Match requests by exact header name and value.
     Header(String, String),
+    /// Match requests by header name with a regex value.
     HeaderRegex(String, Regex),
+    /// Match requests by query parameter key and value.
     Query(String, String),
+    /// Match requests by HTTP method.
     Method(String),
+    /// Both sub-rules must match (logical AND).
     And(Box<Rule>, Box<Rule>),
+    /// Either sub-rule must match (logical OR).
     Or(Box<Rule>, Box<Rule>),
+    /// The sub-rule must not match (logical NOT).
     Not(Box<Rule>),
 }
 
 impl Rule {
+    /// Evaluate this rule against the given request attributes.
     pub fn matches(
         &self,
         host: Option<&str>,
@@ -147,9 +167,11 @@ impl Rule {
     }
 }
 
+/// Recursive-descent parser for Traefik-compatible routing rule expressions.
 pub struct RuleParser;
 
 impl RuleParser {
+    /// Parse a rule string into an AST, supporting `&&`, `||`, `!`, and function matchers.
     pub fn parse(input: &str) -> Result<Rule, RuleParseError> {
         let input = input.trim();
         Self::parse_or(input)

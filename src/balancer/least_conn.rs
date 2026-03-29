@@ -15,6 +15,7 @@ struct LeastConnServer {
 }
 
 impl LeastConnBalancer {
+    /// Create a least-connections balancer with all servers initially healthy and zero connections.
     pub fn new(servers: Vec<Server>) -> Self {
         let servers = servers
             .into_iter()

@@ -14,6 +14,7 @@ struct RandomServer {
 }
 
 impl RandomBalancer {
+    /// Create a random balancer with weight-proportional selection.
     pub fn new(servers: Vec<Server>) -> Self {
         let total_weight: u32 = servers.iter().map(|s| s.weight).sum();
         let servers: Vec<RandomServer> = servers

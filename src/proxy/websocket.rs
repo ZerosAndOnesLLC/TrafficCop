@@ -1,3 +1,5 @@
+//! WebSocket upgrade detection and transparent bidirectional proxying.
+
 use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Empty};
 use hyper::header::{HeaderValue, CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE};

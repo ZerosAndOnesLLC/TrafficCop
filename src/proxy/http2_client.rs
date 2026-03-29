@@ -1,3 +1,5 @@
+//! HTTP/2 connection pool for multiplexed upstream connections (h2c and gRPC).
+
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
 use hyper::client::conn::http2::SendRequest;
@@ -21,6 +23,7 @@ struct Http2Connection {
 }
 
 impl Http2ConnectionPool {
+    /// Create an empty connection pool.
     pub fn new() -> Self {
         Self {
             connections: RwLock::new(HashMap::new()),
@@ -104,14 +107,14 @@ impl Http2ConnectionPool {
         }))
     }
 
-    /// Remove a connection from the pool
+    /// Remove a cached connection for the given host and port.
     pub async fn remove_connection(&self, host: &str, port: u16) {
         let key = format!("{}:{}", host, port);
         let mut connections = self.connections.write().await;
         connections.remove(&key);
     }
 
-    /// Get pool statistics
+    /// Return current pool statistics.
     pub async fn stats(&self) -> Http2PoolStats {
         let connections = self.connections.read().await;
         Http2PoolStats {
@@ -153,18 +156,24 @@ impl Http2Connection {
     }
 }
 
-/// HTTP/2 pool statistics
+/// Snapshot of HTTP/2 pool metrics.
 pub struct Http2PoolStats {
+    /// Number of active connections in the pool.
     pub connection_count: usize,
 }
 
-/// HTTP/2 connection errors
+/// Errors that can occur during HTTP/2 connection lifecycle.
 #[derive(Debug)]
 pub enum Http2Error {
+    /// TCP connection to the upstream host failed.
     Connect(std::io::Error),
+    /// HTTP/2 handshake with the upstream host failed.
     Handshake(hyper::Error),
+    /// The connection was not ready to send a request.
     Ready(hyper::Error),
+    /// Sending the HTTP/2 request failed.
     Request(hyper::Error),
+    /// The upstream connection was already closed.
     ConnectionClosed,
 }
 

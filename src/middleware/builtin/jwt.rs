@@ -19,16 +19,22 @@ pub struct JwtMiddleware {
     strip_authorization_header: bool,
 }
 
+/// Supported JWT signing algorithms.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum JwtAlgorithm {
+    /// HMAC using SHA-256.
     HS256,
+    /// HMAC using SHA-384.
     HS384,
+    /// HMAC using SHA-512.
     HS512,
+    /// No signature verification.
     // RS256/ES256 would require RSA/EC key handling - placeholder
     None,
 }
 
 impl JwtMiddleware {
+    /// Create from config. Returns `None` if the algorithm is unsupported.
     pub fn new(config: JwtConfig) -> Option<Self> {
         let algorithm = match config.algorithm.to_uppercase().as_str() {
             "HS256" => JwtAlgorithm::HS256,
@@ -254,10 +260,15 @@ pub struct JwtValidationResult {
 /// JWT claim value types
 #[derive(Debug, Clone)]
 pub enum ClaimValue {
+    /// A string claim value.
     String(String),
+    /// A numeric claim value.
     Number(i64),
+    /// A boolean claim value.
     Bool(bool),
+    /// An array of string claim values.
     Array(Vec<String>),
+    /// A null claim value.
     Null,
 }
 

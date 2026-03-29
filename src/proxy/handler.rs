@@ -27,12 +27,14 @@ fn hop_by_hop_headers() -> &'static [HeaderName] {
     HEADERS
 }
 
+/// Core proxy handler that routes incoming requests to backend services.
 pub struct ProxyHandler {
     client: Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
     h2_client: Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
 }
 
 impl ProxyHandler {
+    /// Create a new proxy handler with HTTP/1.1 and HTTP/2 client pools.
     pub fn new() -> Self {
         let mut connector = HttpConnector::new();
         connector.set_nodelay(true);
@@ -62,6 +64,7 @@ impl ProxyHandler {
         Self { client, h2_client }
     }
 
+    /// Route and forward an incoming request through middleware to the matched backend.
     #[allow(clippy::too_many_arguments)]
     pub async fn handle(
         &self,

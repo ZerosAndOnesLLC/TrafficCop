@@ -15,6 +15,7 @@ pub struct HeadersMiddleware {
 }
 
 impl HeadersMiddleware {
+    /// Create from config, pre-parsing header names and values for fast application.
     pub fn new(config: HeadersConfig) -> Self {
         let mut request_headers = Vec::new();
         let mut remove_request = Vec::new();

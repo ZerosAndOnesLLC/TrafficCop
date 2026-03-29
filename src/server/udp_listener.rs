@@ -16,6 +16,7 @@ pub struct UdpListener {
 }
 
 impl UdpListener {
+    /// Create a UDP listener for the given entrypoint with its router and service manager.
     pub fn new(
         name: String,
         entrypoint: EntryPoint,

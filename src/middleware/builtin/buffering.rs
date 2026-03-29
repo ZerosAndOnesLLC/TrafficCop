@@ -16,6 +16,7 @@ pub struct BufferingMiddleware {
 }
 
 impl BufferingMiddleware {
+    /// Create from config with the specified buffer size limits.
     pub fn new(config: BufferingConfig) -> Self {
         Self {
             max_request_body_bytes: config.max_request_body_bytes,

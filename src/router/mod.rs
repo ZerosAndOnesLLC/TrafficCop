@@ -1,3 +1,5 @@
+//! Request routing engine that matches incoming requests to backend services.
+
 mod matcher;
 mod rule;
 
@@ -7,6 +9,7 @@ pub use rule::{Rule, RuleParser};
 use crate::config::Config;
 use std::collections::HashMap;
 
+/// Routes incoming requests to services using rule-based matching with host and entrypoint indexing.
 pub struct Router {
     routes: Vec<Route>,
     /// Pre-computed candidate route indices per entrypoint (sorted by priority).
@@ -18,18 +21,26 @@ pub struct Router {
     host_index: HashMap<String, Vec<usize>>,
 }
 
+/// A single routing rule that maps matched requests to a service.
 pub struct Route {
+    /// Unique name identifying this route.
     pub name: String,
+    /// Entrypoints this route is bound to (empty means all).
     pub entrypoints: Vec<String>,
+    /// Compiled matcher for evaluating incoming requests.
     pub matcher: RouteMatcher,
+    /// Name of the backend service to forward to.
     pub service: String,
+    /// Ordered list of middleware names to apply.
     pub middlewares: Vec<String>,
+    /// Priority for route ordering (higher wins).
     pub priority: i32,
     /// Whether this route has been indexed by host (skip in non-host scan)
     host_indexed: bool,
 }
 
 impl Router {
+    /// Build a router from config, pre-computing entrypoint and host indexes.
     pub fn from_config(config: &Config) -> Self {
         let mut routes: Vec<Route> = config
             .routers()
@@ -115,6 +126,7 @@ impl Router {
         }
     }
 
+    /// Find the highest-priority route matching the given request attributes.
     pub fn match_request(
         &self,
         entrypoint: &str,
