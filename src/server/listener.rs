@@ -1,5 +1,5 @@
 use crate::config::EntryPoint;
-use crate::middleware::RequestContext;
+use crate::middleware::{AccessLogWriter, RequestContext};
 use crate::proxy::ProxyHandler;
 use crate::server::SharedState;
 use crate::tls::{try_handle_challenge, TlsAcceptor};
@@ -130,6 +130,7 @@ impl Listener {
             let entrypoint_name = Arc::clone(&self.name);
             let tls_acceptor = self.tls_acceptor.clone();
             let connection_is_tls = tls_acceptor.is_some();
+            let access_log = state.access_log.clone();
 
             tokio::spawn(async move {
                 // Check if draining - reject new connections
@@ -150,6 +151,7 @@ impl Listener {
                                 Arc::clone(&state),
                                 proxy,
                                 connection_is_tls,
+                                access_log,
                             )
                             .await;
                         }
@@ -167,6 +169,7 @@ impl Listener {
                         Arc::clone(&state),
                         proxy,
                         connection_is_tls,
+                        access_log,
                     )
                     .await;
                 }
@@ -184,6 +187,7 @@ impl Listener {
         state: Arc<SharedState>,
         proxy: Arc<ProxyHandler>,
         is_tls: bool,
+        access_log: AccessLogWriter,
     ) where
         I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
     {
@@ -191,6 +195,7 @@ impl Listener {
             let state = Arc::clone(&state);
             let proxy = Arc::clone(&proxy);
             let ep = Arc::clone(&entrypoint_name);
+            let access_log = access_log.clone();
 
             async move {
                 // Check for ACME HTTP-01 challenges first (on non-TLS connections)
@@ -221,7 +226,7 @@ impl Listener {
                 let passive_health = Arc::clone(&state.passive_health);
 
                 proxy
-                    .handle(req, remote_addr, &ep, &router, &services, &middlewares, &passive_health, is_tls)
+                    .handle(req, remote_addr, &ep, &router, &services, &middlewares, &passive_health, is_tls, &access_log)
                     .await
             }
         });

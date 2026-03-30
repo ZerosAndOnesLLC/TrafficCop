@@ -10,7 +10,7 @@ pub use udp_listener::UdpListener;
 
 use crate::config::{watch_config_async, Config};
 use crate::health::{PassiveHealthChecker, PassiveHealthConfig};
-use crate::middleware::MiddlewareRegistry;
+use crate::middleware::{AccessLogWriter, MiddlewareRegistry};
 use crate::proxy::ProxyHandler;
 use crate::router::Router;
 use crate::service::ServiceManager;
@@ -122,6 +122,8 @@ pub struct SharedState {
     pub acme_challenges: Arc<RwLock<HashMap<String, PendingChallenge>>>,
     /// Certificate resolver for SNI-based cert selection
     pub cert_resolver: Option<Arc<CertificateResolver>>,
+    /// File-backed access log writer (shared across all connections).
+    pub access_log: AccessLogWriter,
 }
 
 impl SharedState {
@@ -135,6 +137,7 @@ impl SharedState {
             connections: ConnectionTracker::new(),
             acme_challenges: Arc::new(RwLock::new(HashMap::new())),
             cert_resolver: None,
+            access_log: AccessLogWriter::new(&config.access_log),
         }
     }
 
@@ -148,6 +151,7 @@ impl SharedState {
             connections: ConnectionTracker::new(),
             acme_challenges: acme_manager.get_pending_challenges(),
             cert_resolver: Some(acme_manager.get_resolver()),
+            access_log: AccessLogWriter::new(&config.access_log),
         }
     }
 

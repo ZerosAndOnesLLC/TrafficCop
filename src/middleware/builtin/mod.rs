@@ -18,8 +18,8 @@ mod rate_limit;
 mod redirect_scheme;
 mod retry;
 
-/// Structured access log entry builder and output.
-pub use access_log::{AccessLogBuilder, AccessLogEntry};
+/// Structured access log entry builder, output, and file writer.
+pub use access_log::{AccessLogBuilder, AccessLogEntry, AccessLogWriter};
 /// HTTP Basic authentication middleware.
 pub use basic_auth::BasicAuthMiddleware;
 /// Request/response body buffering for retry support.

@@ -1,5 +1,8 @@
 use serde::Serialize;
+use std::fs::OpenOptions;
+use std::io::{BufWriter, Write};
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tracing::info;
 
@@ -190,6 +193,49 @@ impl AccessLogBuilder {
                 None
             },
             protocol: self.protocol,
+        }
+    }
+}
+
+/// File-backed access log writer that writes JSON lines to a configured file path.
+///
+/// When the config has no `file_path`, the writer is a no-op.  The inner file
+/// handle is wrapped in `Arc<Mutex<BufWriter<File>>>` so it can be cheaply
+/// cloned and shared across tasks.
+#[derive(Clone)]
+pub struct AccessLogWriter {
+    writer: Option<Arc<Mutex<BufWriter<std::fs::File>>>>,
+}
+
+impl AccessLogWriter {
+    /// Open the access log file from config.  Returns a no-op writer when
+    /// access logging is disabled or no file path is set.
+    pub fn new(config: &Option<crate::config::AccessLogConfig>) -> Self {
+        let writer = config.as_ref().and_then(|c| {
+            c.file_path.as_ref().and_then(|path| {
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .ok()
+                    .map(|f| Arc::new(Mutex::new(BufWriter::new(f))))
+            })
+        });
+        if writer.is_some() {
+            info!("Access log writer initialized");
+        }
+        Self { writer }
+    }
+
+    /// Serialize `entry` as a single JSON line and flush it to the log file.
+    pub fn log(&self, entry: &AccessLogEntry) {
+        if let Some(ref writer) = self.writer {
+            if let Ok(json) = serde_json::to_string(entry) {
+                if let Ok(mut w) = writer.lock() {
+                    let _ = writeln!(w, "{}", json);
+                    let _ = w.flush();
+                }
+            }
         }
     }
 }

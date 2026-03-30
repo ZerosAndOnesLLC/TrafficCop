@@ -1,5 +1,6 @@
 use crate::config::ParsedBackendUri;
 use crate::health::{HealthChange, PassiveHealthChecker};
+use crate::middleware::builtin::{AccessLogBuilder, AccessLogWriter};
 use crate::middleware::{BoxFuture, Endpoint, Middleware, MiddlewareRegistry, Next};
 use crate::router::Router;
 use crate::service::ServiceManager;
@@ -76,8 +77,9 @@ impl ProxyHandler {
         middleware_registry: &MiddlewareRegistry,
         passive_health: &Arc<PassiveHealthChecker>,
         is_tls: bool,
+        access_log: &AccessLogWriter,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
-        let start = Instant::now();
+        let log_start = Instant::now();
 
         // Detect if this is a gRPC request for proper error responses
         let is_grpc = grpc::is_grpc_request(&req) || grpc::is_grpc_web_request(&req);
@@ -93,6 +95,21 @@ impl ProxyHandler {
         let path = req.uri().path();
         let query = req.uri().query();
         let method = req.method();
+
+        // Capture values needed for access logging before the request is consumed
+        let log_method = method.to_string();
+        let log_path = path.to_string();
+        let log_host = host.map(|h| h.to_string());
+        let log_query = query.map(|q| q.to_string());
+        let log_user_agent = req.headers().get("user-agent")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let log_referer = req.headers().get("referer")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let log_xff = req.headers().get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
 
         debug!(
             "Request: {} {} from {} (host: {:?}, grpc: {})",
@@ -115,11 +132,21 @@ impl ProxyHandler {
                     host.unwrap_or("-"),
                     path
                 );
-                return Ok(Self::error_response_maybe_grpc(
+                let response = Self::error_response_maybe_grpc(
                     StatusCode::NOT_FOUND,
                     "Not Found",
                     is_grpc,
-                ));
+                );
+                let entry = AccessLogBuilder::new(remote_addr, &log_method, &log_path, "HTTP/1.1")
+                    .host(log_host.as_deref())
+                    .query(log_query.as_deref())
+                    .user_agent(log_user_agent.as_deref())
+                    .referer(log_referer.as_deref())
+                    .forwarded_for(log_xff.as_deref())
+                    .tls(is_tls)
+                    .finish(response.status().as_u16(), None, None, None, None);
+                access_log.log(&entry);
+                return Ok(response);
             }
         };
 
@@ -127,6 +154,8 @@ impl ProxyHandler {
         let route_name = &route.name;
         let service_name = &route.service;
         let route_middlewares = &route.middlewares;
+        let log_route = route_name.clone();
+        let log_service = service_name.clone();
 
         debug!(
             "Matched route '{}' -> service '{}'",
@@ -136,9 +165,9 @@ impl ProxyHandler {
         // Resolve middleware chain for this route
         let mw_instances = middleware_registry.resolve(route_middlewares);
 
-        if mw_instances.is_empty() {
+        let response = if mw_instances.is_empty() {
             // No middleware — execute backend forwarding directly
-            self.forward_to_backend(req, remote_addr, service_name, services, passive_health, host, is_tls, is_grpc, start).await
+            self.forward_to_backend(req, remote_addr, service_name, services, passive_health, host, is_tls, is_grpc, log_start).await
         } else {
             // Build middleware chain
             let mw_boxes: Vec<Box<dyn Middleware>> = mw_instances
@@ -156,7 +185,7 @@ impl ProxyHandler {
                 host: host.map(|h| h.to_string()),
                 is_tls,
                 is_grpc,
-                start,
+                start: log_start,
             };
 
             let next = Next {
@@ -165,7 +194,28 @@ impl ProxyHandler {
             };
 
             next.run(req).await
+        };
+
+        // Log the access entry for all matched-route responses
+        if let Ok(ref resp) = response {
+            let entry = AccessLogBuilder::new(remote_addr, &log_method, &log_path, "HTTP/1.1")
+                .host(log_host.as_deref())
+                .query(log_query.as_deref())
+                .user_agent(log_user_agent.as_deref())
+                .referer(log_referer.as_deref())
+                .forwarded_for(log_xff.as_deref())
+                .tls(is_tls)
+                .finish(
+                    resp.status().as_u16(),
+                    None,
+                    Some(&log_route),
+                    Some(&log_service),
+                    None,
+                );
+            access_log.log(&entry);
         }
+
+        response
     }
 
     /// Forward a request to the backend without middleware

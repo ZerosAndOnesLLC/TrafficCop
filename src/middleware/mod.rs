@@ -6,8 +6,9 @@ pub mod registry;
 
 /// Core built-in middleware types re-exported for convenience.
 pub use builtin::{
-    BasicAuthMiddleware, CorsMiddleware, HeadersMiddleware, IpAllowListMiddleware,
-    IpDenyListMiddleware, RateLimitMiddleware, RedirectSchemeMiddleware,
+    AccessLogWriter, BasicAuthMiddleware, CorsMiddleware, HeadersMiddleware,
+    IpAllowListMiddleware, IpDenyListMiddleware, RateLimitMiddleware,
+    RedirectSchemeMiddleware,
 };
 /// Ordered chain of middleware to execute per request.
 pub use chain::MiddlewareChain;
