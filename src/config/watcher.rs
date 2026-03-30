@@ -39,16 +39,31 @@ impl ConfigWatcher {
     /// Start watching the config file
     /// This is a blocking operation that should be run in a dedicated task
     pub fn watch(self) -> Result<()> {
+        let config_path = Path::new(&self.config_path).to_path_buf();
+        let config_filename = config_path
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // Watch the parent directory instead of the file directly.
+        // On BSD (kqueue), watching a file loses the watch when the inode changes
+        // (e.g., sed -i, atomic writes, cat > file). Watching the directory
+        // catches create events for the new file.
+        let watch_dir = config_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+
         let (sync_tx, sync_rx) = mpsc::channel::<notify::Result<Event>>();
 
         let mut watcher = recommended_watcher(sync_tx)?;
-        watcher.watch(Path::new(&self.config_path), RecursiveMode::NonRecursive)?;
+        watcher.watch(&watch_dir, RecursiveMode::NonRecursive)?;
 
         info!("Watching config file for changes: {}", self.config_path);
 
         // Debounce: wait for writes to complete before reloading
         let mut last_event = std::time::Instant::now();
-        let debounce_duration = Duration::from_millis(100);
+        let debounce_duration = Duration::from_millis(200);
 
         loop {
             match sync_rx.recv() {
@@ -58,6 +73,16 @@ impl ConfigWatcher {
                         event.kind,
                         EventKind::Modify(_) | EventKind::Create(_)
                     ) {
+                        continue;
+                    }
+
+                    // Filter to only our config file (we're watching the whole directory)
+                    let is_our_file = event.paths.iter().any(|p| {
+                        p.file_name()
+                            .map(|f| f.to_string_lossy() == config_filename)
+                            .unwrap_or(false)
+                    });
+                    if !is_our_file {
                         continue;
                     }
 
@@ -71,9 +96,9 @@ impl ConfigWatcher {
                     debug!("Config file changed: {:?}", event);
 
                     // Small delay to ensure file write is complete
-                    std::thread::sleep(Duration::from_millis(50));
+                    std::thread::sleep(Duration::from_millis(100));
 
-                    match Config::load(Path::new(&self.config_path)) {
+                    match Config::load(&config_path) {
                         Ok(config) => {
                             if let Err(e) = config.validate() {
                                 warn!("Invalid config after change: {}", e);
