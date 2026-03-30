@@ -8,9 +8,12 @@ use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::header::{HeaderName, HeaderValue, CONNECTION, CONTENT_TYPE, HOST, TRANSFER_ENCODING, UPGRADE};
 use hyper::{body::Incoming, Request, Response, StatusCode, Uri};
+use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::ClientConfig;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -28,19 +31,74 @@ fn hop_by_hop_headers() -> &'static [HeaderName] {
     HEADERS
 }
 
+/// TLS certificate verifier that accepts all certificates (insecureSkipVerify).
+#[derive(Debug)]
+struct NoVerifier;
+
+impl ServerCertVerifier for NoVerifier {
+    fn verify_server_cert(
+        &self,
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &[rustls::pki_types::CertificateDer<'_>],
+        _: &rustls::pki_types::ServerName<'_>,
+        _: &[u8],
+        _: rustls::pki_types::UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _: &[u8],
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _: &[u8],
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// Type alias for the HTTPS-capable connector used by proxy clients.
+type HttpsConnector = hyper_rustls::HttpsConnector<HttpConnector>;
+
 /// Core proxy handler that routes incoming requests to backend services.
 pub struct ProxyHandler {
-    client: Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
-    h2_client: Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
+    client: Client<HttpsConnector, BoxBody<Bytes, hyper::Error>>,
+    h2_client: Client<HttpsConnector, BoxBody<Bytes, hyper::Error>>,
 }
 
 impl ProxyHandler {
     /// Create a new proxy handler with HTTP/1.1 and HTTP/2 client pools.
     pub fn new() -> Self {
-        let mut connector = HttpConnector::new();
-        connector.set_nodelay(true);
-        connector.set_reuse_address(true);
-        connector.enforce_http(false);
+        let insecure_tls = ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerifier))
+            .with_no_client_auth();
+
+        let mut http = HttpConnector::new();
+        http.set_nodelay(true);
+        http.set_reuse_address(true);
+        http.enforce_http(false);
+
+        let connector = HttpsConnectorBuilder::new()
+            .with_tls_config(insecure_tls.clone())
+            .https_or_http()
+            .enable_all_versions()
+            .wrap_connector(http);
 
         let client = Client::builder(TokioExecutor::new())
             .pool_idle_timeout(Duration::from_secs(90))
@@ -49,10 +107,16 @@ impl ProxyHandler {
             .set_host(true)
             .build(connector);
 
-        let mut h2_connector = HttpConnector::new();
-        h2_connector.set_nodelay(true);
-        h2_connector.set_reuse_address(true);
-        h2_connector.enforce_http(false);
+        let mut h2_http = HttpConnector::new();
+        h2_http.set_nodelay(true);
+        h2_http.set_reuse_address(true);
+        h2_http.enforce_http(false);
+
+        let h2_connector = HttpsConnectorBuilder::new()
+            .with_tls_config(insecure_tls)
+            .https_or_http()
+            .enable_all_versions()
+            .wrap_connector(h2_http);
 
         let h2_client = Client::builder(TokioExecutor::new())
             .pool_idle_timeout(Duration::from_secs(90))
@@ -251,8 +315,8 @@ impl ProxyHandler {
     /// Inner forwarding logic shared between direct and middleware-chained paths
     #[allow(clippy::too_many_arguments)]
     async fn forward_to_backend_inner(
-        client: &Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
-        h2_client: &Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
+        client: &Client<HttpsConnector, BoxBody<Bytes, hyper::Error>>,
+        h2_client: &Client<HttpsConnector, BoxBody<Bytes, hyper::Error>>,
         req: Request<Incoming>,
         remote_addr: SocketAddr,
         service_name: &str,
@@ -675,8 +739,8 @@ impl Middleware for ArcMiddleware {
 
 /// Terminal endpoint for the middleware chain — forwards the request to the backend
 struct ForwardEndpoint<'a> {
-    client: &'a Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
-    h2_client: &'a Client<HttpConnector, BoxBody<Bytes, hyper::Error>>,
+    client: &'a Client<HttpsConnector, BoxBody<Bytes, hyper::Error>>,
+    h2_client: &'a Client<HttpsConnector, BoxBody<Bytes, hyper::Error>>,
     remote_addr: SocketAddr,
     service_name: String,
     services: &'a ServiceManager,
