@@ -51,22 +51,24 @@ impl TraceContext {
     }
 
     fn fill_random(bytes: &mut [u8]) {
-        // Simple xorshift-based random
-        static mut STATE: u64 = 0;
-        unsafe {
-            if STATE == 0 {
-                STATE = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos() as u64;
-            }
-            for byte in bytes.iter_mut() {
-                STATE ^= STATE << 13;
-                STATE ^= STATE >> 7;
-                STATE ^= STATE << 17;
-                *byte = STATE as u8;
-            }
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static STATE: AtomicU64 = AtomicU64::new(0);
+
+        let mut state = STATE.load(Ordering::Relaxed);
+        if state == 0 {
+            state = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64
+                | 1;
         }
+        for byte in bytes.iter_mut() {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *byte = state as u8;
+        }
+        STATE.store(state, Ordering::Relaxed);
     }
 
     fn to_hex(bytes: &[u8]) -> String {
