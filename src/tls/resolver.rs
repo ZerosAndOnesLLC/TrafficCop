@@ -1,4 +1,5 @@
 use super::acme::{StorageManager, StoredCertificate};
+use crate::config::TlsCertificate;
 use anyhow::{Context, Result};
 use parking_lot::RwLock;
 use rustls::pki_types::CertificateDer;
@@ -7,6 +8,7 @@ use rustls::sign::CertifiedKey;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
+use x509_parser::prelude::*;
 
 /// SNI-based certificate resolver that supports:
 /// - Static certificates from config files
@@ -35,6 +37,27 @@ impl CertificateResolver {
             acme_cache: Arc::new(RwLock::new(HashMap::new())),
             default_cert: None,
         }
+    }
+
+    /// Build a resolver from a list of static TLS certificate file pairs.
+    /// Domains are extracted from each cert's CN and SAN entries.
+    pub fn from_static_certs(certs: &[TlsCertificate]) -> Result<Self> {
+        let mut resolver = Self::new();
+        for tc in certs {
+            let key = Self::load_certificate_files(&tc.cert_file, &tc.key_file)
+                .with_context(|| format!("Failed to load cert {}", tc.cert_file))?;
+            let domains = extract_cert_domains(&key.cert[0])
+                .with_context(|| format!("Failed to extract domains from {}", tc.cert_file))?;
+            if domains.is_empty() {
+                warn!(
+                    "Certificate {} has no CN or SAN DNS entries; skipping",
+                    tc.cert_file
+                );
+                continue;
+            }
+            resolver.add_certificate(&domains, key)?;
+        }
+        Ok(resolver)
     }
 
     /// Add a static certificate from PEM files
@@ -235,6 +258,37 @@ impl std::fmt::Debug for CertificateResolver {
             .field("has_default", &self.default_cert.is_some())
             .finish()
     }
+}
+
+/// Extract DNS domain names from a DER-encoded X.509 certificate.
+/// Collects the subject CN (if a valid DNS name) and all SAN `dNSName` entries.
+fn extract_cert_domains(cert_der: &CertificateDer<'_>) -> Result<Vec<String>> {
+    let (_, parsed) =
+        X509Certificate::from_der(cert_der.as_ref()).context("Failed to parse X.509 DER")?;
+
+    let mut domains = Vec::new();
+
+    for cn in parsed.subject().iter_common_name() {
+        if let Ok(s) = cn.as_str()
+            && !s.is_empty()
+            && !domains.iter().any(|d: &String| d == s)
+        {
+            domains.push(s.to_string());
+        }
+    }
+
+    if let Ok(Some(san)) = parsed.subject_alternative_name() {
+        for name in &san.value.general_names {
+            if let GeneralName::DNSName(dns) = name
+                && !dns.is_empty()
+                && !domains.iter().any(|d| d == dns)
+            {
+                domains.push(dns.to_string());
+            }
+        }
+    }
+
+    Ok(domains)
 }
 
 #[cfg(test)]

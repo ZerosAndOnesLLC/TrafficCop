@@ -5,6 +5,7 @@ use http_body_util::{combinators::BoxBody, BodyExt, Empty};
 use hyper::header::{HeaderValue, CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE};
 use hyper::{body::Incoming, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
+use rustls::pki_types::ServerName;
 use std::net::SocketAddr;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -47,11 +48,15 @@ pub async fn handle_websocket_upgrade(
     };
 
     let host = backend_url.host_str().unwrap_or("localhost");
-    let port = backend_url.port().unwrap_or(80);
+    // `Url::port()` returns None for scheme-default ports (443 for https, 80 for http),
+    // so fall back to the known default for the scheme before defaulting to 80.
+    let port = backend_url.port_or_known_default().unwrap_or(80);
     let addr = format!("{}:{}", host, port);
+    let is_tls_backend = backend_url.scheme().eq_ignore_ascii_case("https")
+        || backend_url.scheme().eq_ignore_ascii_case("wss");
 
     // Connect to backend
-    let backend_stream = match TcpStream::connect(&addr).await {
+    let tcp_stream = match TcpStream::connect(&addr).await {
         Ok(stream) => stream,
         Err(e) => {
             error!("Failed to connect to backend for WebSocket: {}", e);
@@ -59,9 +64,36 @@ pub async fn handle_websocket_upgrade(
         }
     };
 
-    backend_stream.set_nodelay(true).ok();
+    tcp_stream.set_nodelay(true).ok();
 
-    debug!("WebSocket: Connected to backend {}", addr);
+    // If the backend is TLS, wrap the TcpStream in a rustls client stream before
+    // sending the HTTP Upgrade request. The underlying bidirectional byte stream
+    // is still just AsyncRead + AsyncWrite, so the rest of the handler is uniform.
+    let mut backend_stream: Box<dyn BackendIo> = if is_tls_backend {
+        let server_name = match ServerName::try_from(host.to_string()) {
+            Ok(n) => n,
+            Err(e) => {
+                error!("Invalid TLS server name '{}' for WebSocket backend: {}", host, e);
+                return Ok(error_response(StatusCode::BAD_GATEWAY));
+            }
+        };
+        let connector = super::tls_client::insecure_connector();
+        match connector.connect(server_name, tcp_stream).await {
+            Ok(tls) => Box::new(tls),
+            Err(e) => {
+                error!("TLS handshake to WebSocket backend {} failed: {}", addr, e);
+                return Ok(error_response(StatusCode::BAD_GATEWAY));
+            }
+        }
+    } else {
+        Box::new(tcp_stream)
+    };
+
+    debug!(
+        "WebSocket: Connected to backend {} ({})",
+        addr,
+        if is_tls_backend { "tls" } else { "plain" }
+    );
 
     // Build the WebSocket upgrade request to send to backend
     let ws_key = req
@@ -95,7 +127,6 @@ pub async fn handle_websocket_upgrade(
     );
 
     // Write upgrade request to backend
-    let mut backend_stream = backend_stream;
     if let Err(e) = backend_stream.write_all(upgrade_request.as_bytes()).await {
         error!("Failed to send WebSocket upgrade to backend: {}", e);
         return Ok(error_response(StatusCode::BAD_GATEWAY));
@@ -219,6 +250,12 @@ fn base64_encode(data: &[u8]) -> String {
 
     result
 }
+
+/// Backend stream abstraction covering both plain TCP and TLS-wrapped TCP.
+/// The WebSocket handler owns a `Box<dyn BackendIo>` so the upgrade path is
+/// identical regardless of whether the upstream is http:// or https://.
+trait BackendIo: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> BackendIo for T {}
 
 /// Proxy data bidirectionally between two streams
 async fn proxy_streams<C, B>(client: C, backend: B) -> std::io::Result<()>

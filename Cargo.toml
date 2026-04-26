@@ -1,6 +1,6 @@
 [package]
 name = "trafficcop"
-version = "1.4.2"
+version = "1.4.3"
 edition = "2024"
 authors = ["Zeros and Ones LLC <support@zerosandones.us>"]
 description = "TrafficCop Traffic Manager - High-performance reverse proxy and load balancer"
@@ -25,6 +25,7 @@ hyper-rustls = { version = "0.27", features = ["ring", "http1", "http2"] }
 rustls-pemfile = "2"
 ring = "0.17"
 base64 = "0.22"
+x509-parser = "0.17"
 
 # Configuration
 serde = { version = "1", features = ["derive"] }

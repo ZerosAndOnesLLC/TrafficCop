@@ -5,6 +5,8 @@ pub mod grpc;
 mod handler;
 /// HTTP/2 connection pooling for upstream backends.
 pub mod http2_client;
+/// Shared TLS client configuration for upstream backend connections.
+pub(crate) mod tls_client;
 /// WebSocket upgrade detection and bidirectional proxying.
 pub mod websocket;
 

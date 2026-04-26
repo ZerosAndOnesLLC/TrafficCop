@@ -148,12 +148,14 @@ impl ProxyHandler {
         // Detect if this is a gRPC request for proper error responses
         let is_grpc = grpc::is_grpc_request(&req) || grpc::is_grpc_web_request(&req);
 
-        // Extract host - we need to clone only if we'll use it for X-Forwarded-Host
-        // but for matching we can use a reference
+        // Extract host. HTTP/1.1 puts it in the Host header; HTTP/2 puts it
+        // in the :authority pseudo-header, reflected on the request URI.
         let host_header_value = req.headers().get(HOST).cloned();
+        let host_from_uri = req.uri().host().map(|h| h.to_string());
         let host = host_header_value.as_ref()
             .and_then(|h| h.to_str().ok())
-            .map(|h| h.split(':').next().unwrap_or(h));
+            .map(|h| h.split(':').next().unwrap_or(h))
+            .or(host_from_uri.as_deref());
 
         // Use references directly - no allocations
         let path = req.uri().path();

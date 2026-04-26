@@ -106,6 +106,29 @@ impl Default for ConnectionTracker {
     }
 }
 
+/// Build a cert resolver from static `tls.certificates` entries in the config.
+/// Returns None when no static certs are configured; returns Some even on
+/// partial success so at least the successfully-loaded certs work.
+fn build_static_resolver(config: &Config) -> Option<Arc<CertificateResolver>> {
+    let certs = config.tls.as_ref()?.certificates.as_slice();
+    if certs.is_empty() {
+        return None;
+    }
+    match CertificateResolver::from_static_certs(certs) {
+        Ok(resolver) => {
+            info!(
+                "Loaded {} static TLS certificate(s) for SNI-based resolution",
+                certs.len()
+            );
+            Some(Arc::new(resolver))
+        }
+        Err(e) => {
+            error!("Failed to load static TLS certificates: {}", e);
+            None
+        }
+    }
+}
+
 /// Shared state that can be hot-reloaded
 pub struct SharedState {
     /// The current request router (hot-swappable).
@@ -129,6 +152,7 @@ pub struct SharedState {
 impl SharedState {
     /// Build shared state from config without ACME support.
     pub fn new(config: &Config) -> Self {
+        let cert_resolver = build_static_resolver(config);
         Self {
             router: ArcSwap::from_pointee(Router::from_config(config)),
             services: ArcSwap::from_pointee(ServiceManager::new(config)),
@@ -136,7 +160,7 @@ impl SharedState {
             passive_health: Arc::new(PassiveHealthChecker::new(PassiveHealthConfig::default())),
             connections: ConnectionTracker::new(),
             acme_challenges: Arc::new(RwLock::new(HashMap::new())),
-            cert_resolver: None,
+            cert_resolver,
             access_log: AccessLogWriter::new(&config.access_log),
         }
     }
