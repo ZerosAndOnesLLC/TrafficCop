@@ -11,6 +11,9 @@ use trafficcop::{
     tls::AcmeManagerBuilder,
 };
 
+#[cfg(unix)]
+mod single_instance;
+
 #[derive(Parser, Debug)]
 #[command(name = "trafficcop")]
 #[command(about = "High-performance reverse proxy and load balancer")]
@@ -37,6 +40,21 @@ async fn main() -> Result<()> {
         .expect("Failed to install rustls crypto provider");
 
     let args = Args::parse();
+
+    // Refuse to start if another trafficcop instance already holds the lock.
+    // Skip when --validate (CLI-style invocation, no long-running state).
+    #[cfg(unix)]
+    let _instance_lock = if args.validate {
+        None
+    } else {
+        match single_instance::acquire("trafficcop") {
+            Ok(lock) => Some(lock),
+            Err(e) => {
+                eprintln!("trafficcop: {e}");
+                std::process::exit(1);
+            }
+        }
+    };
 
     // Initialize tracing
     let filter = if args.debug {
