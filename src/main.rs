@@ -146,5 +146,13 @@ async fn main() -> Result<()> {
     info!("Starting TrafficCop server");
     server.run().await?;
 
-    Ok(())
+    // Some background runtimes — notably the Prometheus exporter installed
+    // by `metrics-exporter-prometheus::install()` — spawn their own tokio
+    // runtimes on private threads. Those threads aren't joined when our
+    // main runtime drops, so the process can stay alive after `server.run()`
+    // returns from a SIGTERM-driven graceful drain. Force a clean exit so
+    // `service trafficcop stop` actually sees the supervisor exit instead
+    // of pwait()ing forever.
+    info!("TrafficCop shutdown complete");
+    std::process::exit(0);
 }
