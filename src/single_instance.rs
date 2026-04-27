@@ -1,8 +1,8 @@
 //! File-locking-based singleton enforcement for long-running daemons.
 //!
-//! `acquire(name)` is called immediately after argument parsing and before
-//! any heavy initialisation. The returned `InstanceLock` must be kept alive
-//! for the lifetime of the process — drop it to release. The kernel
+//! Each binary calls `acquire(name)` immediately after argument parsing and
+//! before any heavy initialisation. The returned `InstanceLock` must be kept
+//! alive for the lifetime of the process — drop it to release. The kernel
 //! releases the lock automatically on process death (including SIGKILL),
 //! so the lockfile never leaks across crashes.
 //!
@@ -31,6 +31,7 @@ pub enum InstanceLockError {
     LockFailed(#[source] nix::Error),
 }
 
+/// Holds the lock for the lifetime of the process. Dropping releases it.
 #[derive(Debug)]
 pub struct InstanceLock {
     _file: std::fs::File,
@@ -45,10 +46,13 @@ impl InstanceLock {
     }
 }
 
+/// Acquire an exclusive lock on `/var/run/<name>.lock`. Returns
+/// `AlreadyRunning(pid)` if held. The lock auto-releases on process death.
 pub fn acquire(name: &str) -> Result<InstanceLock, InstanceLockError> {
     acquire_at(&PathBuf::from(format!("/var/run/{name}.lock")))
 }
 
+/// Like `acquire` but takes an explicit path (used by tests).
 pub fn acquire_at(path: &Path) -> Result<InstanceLock, InstanceLockError> {
     let mut file = OpenOptions::new()
         .read(true)
@@ -77,6 +81,7 @@ pub fn acquire_at(path: &Path) -> Result<InstanceLock, InstanceLockError> {
     if res == -1 {
         let errno = nix::errno::Errno::last();
         if matches!(errno, nix::errno::Errno::EAGAIN | nix::errno::Errno::EACCES) {
+            // Read the recorded PID for the error message.
             let mut buf = String::new();
             let _ = file.seek(SeekFrom::Start(0));
             let _ = file.read_to_string(&mut buf);
@@ -86,6 +91,8 @@ pub fn acquire_at(path: &Path) -> Result<InstanceLock, InstanceLockError> {
         return Err(InstanceLockError::LockFailed(errno.into()));
     }
 
+    // Write our PID for diagnostics. Truncate first so a smaller PID (e.g.
+    // after a reboot) doesn't leave stale tail bytes.
     let _ = file.set_len(0);
     let _ = file.seek(SeekFrom::Start(0));
     let _ = writeln!(file, "{}", std::process::id());
@@ -96,6 +103,9 @@ pub fn acquire_at(path: &Path) -> Result<InstanceLock, InstanceLockError> {
     })
 }
 
+// `OpenOptionsExt::mode` only sets perms when creating, but we want a stable
+// API regardless of whether the file already exists. This trait extension
+// just folds the cfg.
 trait OpenOptionsExt {
     fn mode_if_creating(&mut self, mode: u32) -> &mut Self;
 }
@@ -127,6 +137,9 @@ mod tests {
 
     #[test]
     fn second_acquire_in_same_process_succeeds_after_drop() {
+        // Same-process F_SETLK is reentrant in POSIX: a process can re-lock
+        // a file it already holds. So we test drop semantics by acquiring,
+        // dropping, and re-acquiring.
         let path = tmp_lock("drop");
         let _ = std::fs::remove_file(&path);
         let lock = acquire_at(&path).expect("first acquire");
