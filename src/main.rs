@@ -49,9 +49,13 @@ async fn main() -> Result<()> {
     } else {
         match single_instance::acquire("trafficcop") {
             Ok(lock) => Some(lock),
-            Err(e) => {
-                eprintln!("trafficcop: {e}");
+            Err(single_instance::InstanceLockError::AlreadyRunning(pid)) => {
+                eprintln!("trafficcop: another instance is already running (pid {pid})");
                 std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("trafficcop: warning: singleton lock unavailable: {e} (continuing)");
+                None
             }
         }
     };
