@@ -825,6 +825,50 @@ trafficcop/
     └── proxy_benchmark.rs
 ```
 
+## AiFw HA Integration
+
+When AiFw is deployed in active-passive cluster mode, a CARP virtual IP floats between
+nodes on failover. LAN clients that send HTTP/HTTPS traffic through TrafficCop should
+use the CARP VIP as their proxy front-end address so that connections are picked up by
+the new master without client reconfiguration.
+
+### Entry point address format — already wildcard by default
+
+TrafficCop uses Traefik v3 compatible entry point notation. An address with no host
+component (e.g. `":80"`, `":443"`) binds to all interfaces, including any CARP VIP
+that the OS has assigned to the node:
+
+```yaml
+entryPoints:
+  web:
+    address: ":80"     # binds 0.0.0.0:80 — accepts on CARP VIP automatically
+
+  websecure:
+    address: ":443"    # same — wildcard
+```
+
+**No TrafficCop configuration change is needed for AiFw HA** as long as entry points
+use the `":port"` wildcard form. On failover, the OS adds the CARP VIP to the new
+master's network interface and TrafficCop's already-open wildcard listener begins
+accepting connections on that IP immediately.
+
+### IP-specific bindings
+
+If you have restricted an entry point to a specific IP (e.g. `"192.168.1.1:443"`),
+the listener on the new master will not accept connections arriving at the CARP VIP.
+In that case, either:
+
+1. Switch to wildcard: `address: ":443"`
+2. Or add a second entry point bound to the CARP VIP and route both in your routers.
+
+### Distributed HA (Redis/Valkey cluster mode)
+
+TrafficCop's own cluster mode (`cluster.enabled: true`) uses Redis/Valkey for shared
+state (rate limiting, sticky sessions, health status). This is independent of AiFw's
+CARP-based failover: the two HA mechanisms operate at different layers. AiFw CARP
+handles IP-layer failover; TrafficCop cluster mode handles application-layer state
+sharing. They can be used together or independently.
+
 ## License
 
 MIT
