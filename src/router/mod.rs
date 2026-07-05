@@ -65,7 +65,7 @@ impl Router {
             .collect();
 
         // Sort by priority (higher first)
-        routes.sort_by(|a, b| b.priority.cmp(&a.priority));
+        routes.sort_by_key(|r| std::cmp::Reverse(r.priority));
 
         // Build host index
         let mut host_index: HashMap<String, Vec<usize>> = HashMap::new();

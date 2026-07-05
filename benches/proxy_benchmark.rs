@@ -1,4 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use std::hint::black_box;
 use hyper::HeaderMap;
 use std::collections::HashMap;
 
@@ -141,7 +142,7 @@ fn load_balancer_benchmark(c: &mut Criterion) {
 
     // Simulate round-robin selection
     let counter = AtomicUsize::new(0);
-    let backends = vec!["backend1", "backend2", "backend3", "backend4"];
+    let backends = ["backend1", "backend2", "backend3", "backend4"];
 
     group.bench_function("round_robin_4_backends", |b| {
         b.iter(|| {
@@ -157,7 +158,7 @@ fn load_balancer_benchmark(c: &mut Criterion) {
         current_weight: std::cell::Cell<i32>,
     }
 
-    let weighted_backends = vec![
+    let weighted_backends = [
         WeightedBackend {
             addr: "backend1",
             weight: 5,

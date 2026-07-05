@@ -229,13 +229,12 @@ impl AccessLogWriter {
 
     /// Serialize `entry` as a single JSON line and flush it to the log file.
     pub fn log(&self, entry: &AccessLogEntry) {
-        if let Some(ref writer) = self.writer {
-            if let Ok(json) = serde_json::to_string(entry) {
-                if let Ok(mut w) = writer.lock() {
-                    let _ = writeln!(w, "{}", json);
-                    let _ = w.flush();
-                }
-            }
+        if let Some(ref writer) = self.writer
+            && let Ok(json) = serde_json::to_string(entry)
+            && let Ok(mut w) = writer.lock()
+        {
+            let _ = writeln!(w, "{}", json);
+            let _ = w.flush();
         }
     }
 }
