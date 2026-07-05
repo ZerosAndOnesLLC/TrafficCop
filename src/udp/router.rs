@@ -143,7 +143,7 @@ impl UdpRouter {
 
         // Sort routers by priority (higher first)
         for routes in routers.values_mut() {
-            routes.sort_by(|a, b| b.priority.cmp(&a.priority));
+            routes.sort_by_key(|r| std::cmp::Reverse(r.priority));
         }
 
         Self { routers, catch_all }

@@ -348,10 +348,8 @@ impl RuleParser {
                 '`' => in_backtick = !in_backtick,
                 '(' if !in_backtick => depth += 1,
                 ')' if !in_backtick => depth -= 1,
-                _ if !in_backtick && depth == 0 => {
-                    if input[i..].starts_with(op) {
-                        return Some(i);
-                    }
+                _ if !in_backtick && depth == 0 && input[i..].starts_with(op) => {
+                    return Some(i);
                 }
                 _ => {}
             }
