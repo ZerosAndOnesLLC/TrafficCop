@@ -14,7 +14,59 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor as TokioTlsAcceptor;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
+
+/// Forwarded headers stripped from requests arriving from untrusted peers,
+/// preventing client IP spoofing and forwarded-header injection.
+const FORWARDED_HEADERS: [&str; 6] = [
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-forwarded-port",
+    "x-forwarded-server",
+    "x-real-ip",
+];
+
+/// Precomputed forwarded-headers trust policy for an entrypoint
+/// (Traefik `forwardedHeaders.trustedIPs` / `forwardedHeaders.insecure`).
+/// Default with no configuration: no peer is trusted.
+pub struct ForwardedTrust {
+    insecure: bool,
+    trusted: Vec<ipnetwork::IpNetwork>,
+}
+
+impl ForwardedTrust {
+    fn from_entrypoint(name: &str, entrypoint: &EntryPoint) -> Self {
+        let (insecure, trusted) = match &entrypoint.forwarded_headers {
+            Some(fh) => {
+                let trusted = fh
+                    .trusted_ips
+                    .iter()
+                    .filter_map(|s| match s.parse::<ipnetwork::IpNetwork>() {
+                        Ok(net) => Some(net),
+                        Err(_) => match s.parse::<std::net::IpAddr>() {
+                            Ok(ip) => Some(ipnetwork::IpNetwork::from(ip)),
+                            Err(_) => {
+                                warn!(
+                                    "Entrypoint '{}': invalid forwardedHeaders.trustedIPs entry '{}' ignored",
+                                    name, s
+                                );
+                                None
+                            }
+                        },
+                    })
+                    .collect();
+                (fh.insecure, trusted)
+            }
+            None => (false, Vec::new()),
+        };
+        Self { insecure, trusted }
+    }
+
+    fn is_trusted(&self, ip: std::net::IpAddr) -> bool {
+        self.insecure || self.trusted.iter().any(|net| net.contains(ip))
+    }
+}
 
 /// TCP/TLS listener for a single entrypoint, handling HTTP/1.1 and HTTP/2 connections.
 pub struct Listener {
@@ -23,6 +75,8 @@ pub struct Listener {
     state: Arc<SharedState>,
     proxy: Arc<ProxyHandler>,
     tls_acceptor: Option<TokioTlsAcceptor>,
+    forwarded_trust: Arc<ForwardedTrust>,
+    max_request_body_bytes: Option<u64>,
 }
 
 impl Listener {
@@ -35,6 +89,11 @@ impl Listener {
     ) -> Self {
         // Build TLS acceptor
         let tls_acceptor = Self::build_tls_acceptor(&name, &entrypoint, &state);
+        let forwarded_trust = Arc::new(ForwardedTrust::from_entrypoint(&name, &entrypoint));
+        let max_request_body_bytes = entrypoint
+            .transport
+            .as_ref()
+            .and_then(|t| t.max_request_body_bytes);
 
         Self {
             name: Arc::from(name),
@@ -42,6 +101,8 @@ impl Listener {
             state,
             proxy,
             tls_acceptor,
+            forwarded_trust,
+            max_request_body_bytes,
         }
     }
 
@@ -131,6 +192,8 @@ impl Listener {
             let tls_acceptor = self.tls_acceptor.clone();
             let connection_is_tls = tls_acceptor.is_some();
             let access_log = state.access_log.clone();
+            let forwarded_trust = Arc::clone(&self.forwarded_trust);
+            let max_body = self.max_request_body_bytes;
 
             tokio::spawn(async move {
                 // Check if draining - reject new connections
@@ -152,6 +215,8 @@ impl Listener {
                                 proxy,
                                 connection_is_tls,
                                 access_log,
+                                forwarded_trust,
+                                max_body,
                             )
                             .await;
                         }
@@ -170,6 +235,8 @@ impl Listener {
                         proxy,
                         connection_is_tls,
                         access_log,
+                        forwarded_trust,
+                        max_body,
                     )
                     .await;
                 }
@@ -180,6 +247,7 @@ impl Listener {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn serve_connection<I>(
         io: I,
         remote_addr: SocketAddr,
@@ -188,6 +256,8 @@ impl Listener {
         proxy: Arc<ProxyHandler>,
         is_tls: bool,
         access_log: AccessLogWriter,
+        forwarded_trust: Arc<ForwardedTrust>,
+        max_body: Option<u64>,
     ) where
         I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
     {
@@ -196,8 +266,41 @@ impl Listener {
             let proxy = Arc::clone(&proxy);
             let ep = Arc::clone(&entrypoint_name);
             let access_log = access_log.clone();
+            let forwarded_trust = Arc::clone(&forwarded_trust);
 
             async move {
+                // Strip forwarded headers from untrusted peers so downstream
+                // consumers (IP filters, access logs, backends) never see
+                // client-spoofed values. Trust is granted via the entrypoint's
+                // forwardedHeaders.trustedIPs / insecure settings.
+                if !forwarded_trust.is_trusted(remote_addr.ip()) {
+                    let headers = req.headers_mut();
+                    for header in FORWARDED_HEADERS {
+                        headers.remove(header);
+                    }
+                }
+
+                // Reject oversized request bodies up front (transport.maxRequestBodyBytes).
+                // Bodies stream through the proxy, so Content-Length is the
+                // enforcement point; chunked uploads are bounded by backends.
+                if let Some(limit) = max_body
+                    && let Some(len) = req
+                        .headers()
+                        .get(hyper::header::CONTENT_LENGTH)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.parse::<u64>().ok())
+                    && len > limit
+                {
+                    let body = http_body_util::Full::new(bytes::Bytes::from_static(
+                        b"Request Entity Too Large",
+                    ))
+                    .map_err(|_: std::convert::Infallible| unreachable!("Infallible error"))
+                    .boxed();
+                    return Ok(hyper::Response::builder()
+                        .status(hyper::StatusCode::PAYLOAD_TOO_LARGE)
+                        .body(body)
+                        .unwrap());
+                }
                 // Check for ACME HTTP-01 challenges first (on non-TLS connections)
                 if !is_tls
                     && let Some(response) =

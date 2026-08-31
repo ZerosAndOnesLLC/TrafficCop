@@ -20,6 +20,8 @@ pub struct JwtMiddleware {
 }
 
 /// Supported JWT signing algorithms.
+/// The `none` algorithm is deliberately rejected: accepting it would disable
+/// signature verification entirely (CVE-2015-9235 class of bypass).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum JwtAlgorithm {
     /// HMAC using SHA-256.
@@ -28,24 +30,26 @@ pub enum JwtAlgorithm {
     HS384,
     /// HMAC using SHA-512.
     HS512,
-    /// No signature verification.
-    // RS256/ES256 would require RSA/EC key handling - placeholder
-    None,
 }
 
 impl JwtMiddleware {
-    /// Create from config. Returns `None` if the algorithm is unsupported.
+    /// Create from config. Returns `None` if the algorithm is unsupported
+    /// or no secret is configured.
     pub fn new(config: JwtConfig) -> Option<Self> {
         let algorithm = match config.algorithm.to_uppercase().as_str() {
             "HS256" => JwtAlgorithm::HS256,
             "HS384" => JwtAlgorithm::HS384,
             "HS512" => JwtAlgorithm::HS512,
-            "NONE" => JwtAlgorithm::None,
             _ => {
                 tracing::warn!("Unsupported JWT algorithm: {}. Only HMAC algorithms (HS256, HS384, HS512) are currently supported", config.algorithm);
                 return None;
             }
         };
+
+        if config.secret.is_none() {
+            tracing::warn!("JWT middleware requires a secret for HMAC algorithms; middleware disabled");
+            return None;
+        }
 
         let header_name = HeaderName::try_from(config.header_name.as_str()).ok()?;
 
@@ -155,12 +159,12 @@ impl JwtMiddleware {
         let header: JwtHeader = parse_json_object(&header_json)
             .ok_or((StatusCode::UNAUTHORIZED, "Invalid JWT header".to_string()))?;
 
-        // Verify algorithm matches
+        // Verify algorithm matches. "none" is rejected here as an unsupported
+        // algorithm — a token must never be able to opt out of verification.
         let token_alg = match header.alg.to_uppercase().as_str() {
             "HS256" => JwtAlgorithm::HS256,
             "HS384" => JwtAlgorithm::HS384,
             "HS512" => JwtAlgorithm::HS512,
-            "NONE" => JwtAlgorithm::None,
             _ => return Err((StatusCode::UNAUTHORIZED, format!("Unsupported algorithm: {}", header.alg))),
         };
 
@@ -169,7 +173,7 @@ impl JwtMiddleware {
         }
 
         // Verify signature
-        if self.algorithm != JwtAlgorithm::None {
+        {
             let secret = self.secret.as_ref()
                 .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "No secret configured".to_string()))?;
 
@@ -178,7 +182,6 @@ impl JwtMiddleware {
                 JwtAlgorithm::HS256 => hmac_sha256(secret, message.as_bytes()),
                 JwtAlgorithm::HS384 => hmac_sha384(secret, message.as_bytes()),
                 JwtAlgorithm::HS512 => hmac_sha512(secret, message.as_bytes()),
-                JwtAlgorithm::None => vec![],
             };
 
             let actual_sig = base64_url_decode_bytes(signature_b64)
@@ -729,6 +732,37 @@ mod tests {
     fn test_jwt_middleware_creation() {
         let middleware = JwtMiddleware::new(test_config());
         assert!(middleware.is_some());
+    }
+
+    #[test]
+    fn test_none_algorithm_config_rejected() {
+        let mut config = test_config();
+        config.algorithm = "none".to_string();
+        assert!(JwtMiddleware::new(config).is_none());
+    }
+
+    #[test]
+    fn test_missing_secret_rejected() {
+        let mut config = test_config();
+        config.secret = None;
+        assert!(JwtMiddleware::new(config).is_none());
+    }
+
+    #[test]
+    fn test_none_algorithm_token_rejected() {
+        let middleware = JwtMiddleware::new(test_config()).unwrap();
+
+        // Forged token claiming alg:none with an empty signature
+        let header_b64 = base64_url_encode(br#"{"alg":"none","typ":"JWT"}"#);
+        let payload_b64 = base64_url_encode(br#"{"sub":"attacker","exp":9999999999}"#);
+        let token = format!("{}.{}.", header_b64, payload_b64);
+
+        let req = Request::builder()
+            .header(AUTHORIZATION, format!("Bearer {}", token))
+            .body(())
+            .unwrap();
+
+        assert!(middleware.validate(&req).is_err());
     }
 
     #[test]

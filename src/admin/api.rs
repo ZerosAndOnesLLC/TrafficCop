@@ -56,6 +56,35 @@ impl AdminApi {
         let path = req.uri().path();
         let method = req.method();
 
+        // Authentication. /ping stays open for load balancer health probes.
+        if path != "/ping" {
+            let configured_token = self
+                .config
+                .api
+                .as_ref()
+                .and_then(|a| a.token.as_deref());
+
+            match configured_token {
+                Some(token) => {
+                    if !Self::bearer_token_matches(req.headers(), token) {
+                        return self.error_response(
+                            StatusCode::UNAUTHORIZED,
+                            "Missing or invalid admin API token",
+                        );
+                    }
+                }
+                None => {
+                    // Without a token, mutating endpoints are disabled entirely.
+                    if method != hyper::Method::GET {
+                        return self.error_response(
+                            StatusCode::FORBIDDEN,
+                            "Mutating admin endpoints require api.token to be configured",
+                        );
+                    }
+                }
+            }
+        }
+
         match (method.as_str(), path) {
             ("GET", "/api/overview") => self.overview().await,
             ("GET", "/api/entrypoints") => self.entrypoints().await,
@@ -576,6 +605,23 @@ impl AdminApi {
             .header("content-type", "text/html; charset=utf-8")
             .body(Self::full_body(html))
             .unwrap()
+    }
+
+    /// Constant-time check of `Authorization: Bearer <token>`.
+    fn bearer_token_matches(headers: &hyper::HeaderMap, expected: &str) -> bool {
+        headers
+            .get(hyper::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer "))
+            .map(|presented| {
+                let a = presented.as_bytes();
+                let b = expected.as_bytes();
+                if a.len() != b.len() {
+                    return false;
+                }
+                a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+            })
+            .unwrap_or(false)
     }
 
     fn not_found(&self) -> Response<BoxBody<Bytes, hyper::Error>> {

@@ -338,18 +338,18 @@ fn md5_compute(message: &[u8]) -> [u8; 16] {
 /// Fast xorshift random - no allocation, no syscall
 #[inline]
 fn fast_random() -> u32 {
-    use std::cell::Cell;
-    thread_local! {
-        static STATE: Cell<u32> = const { Cell::new(0xDEADC0DE) };
+    use ring::rand::SecureRandom;
+    let rng = ring::rand::SystemRandom::new();
+    let mut buf = [0u8; 4];
+    if rng.fill(&mut buf).is_err() {
+        // OS RNG failure is effectively unreachable; degrade to a timestamp
+        // rather than panicking (release builds abort on panic).
+        return std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
     }
-    STATE.with(|state| {
-        let mut x = state.get();
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        state.set(x);
-        x
-    })
+    u32::from_ne_bytes(buf)
 }
 
 /// Constant-time string comparison to prevent timing attacks

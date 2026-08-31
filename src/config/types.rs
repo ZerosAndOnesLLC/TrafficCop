@@ -632,6 +632,11 @@ pub struct ApiConfig {
     /// Hide dashboard advertisement
     #[serde(default, rename = "disabledashboardad")]
     pub disable_dashboard_ad: bool,
+
+    /// Bearer token required on all admin API requests (except /ping).
+    /// When unset, mutating (non-GET) admin endpoints are disabled.
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 /// Application logging configuration (level, format, output file).
@@ -837,6 +842,11 @@ pub struct EntryPointTransport {
     /// Maximum time a keep-alive connection can be used
     #[serde(default)]
     pub keep_alive_max_time: Option<Duration>,
+
+    /// Maximum request body size in bytes, enforced via Content-Length.
+    /// Requests declaring a larger body are rejected with 413. Unset = unlimited.
+    #[serde(default)]
+    pub max_request_body_bytes: Option<u64>,
 }
 
 /// Timeouts for reading requests, writing responses, and idle connections.

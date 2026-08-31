@@ -80,21 +80,7 @@ impl BasicAuthMiddleware {
     /// Verify username and password
     fn verify(&self, username: &str, password: &str) -> bool {
         match self.users.get(username) {
-            Some(stored) => {
-                // Check if it's a hash or plaintext
-                if stored.starts_with("$apr1$") || stored.starts_with("$2") {
-                    // Apache MD5 or bcrypt hash - for now just compare directly
-                    // In production, you'd want proper hash verification
-                    // This is a placeholder for the hash comparison
-                    tracing::warn!(
-                        "Hash-based password verification not fully implemented, using plaintext comparison"
-                    );
-                    stored == password
-                } else {
-                    // Plaintext comparison (constant-time would be better for production)
-                    constant_time_compare(stored, password)
-                }
-            }
+            Some(stored) => verify_password(stored, password),
             None => false,
         }
     }
@@ -112,6 +98,45 @@ impl BasicAuthMiddleware {
     pub fn realm(&self) -> &str {
         &self.realm
     }
+}
+
+/// Verify a password against an htpasswd-style stored credential.
+/// Supports Apache MD5 (`$apr1$`), bcrypt (`$2a$`/`$2b$`/`$2y$`/`$2x$`),
+/// SHA1 (`{SHA}`), and plaintext (constant-time compare).
+///
+/// Hash shapes are validated before delegating to `htpasswd_verify`, which
+/// panics on malformed input — and release builds use `panic = "abort"`.
+fn verify_password(stored: &str, password: &str) -> bool {
+    if stored.starts_with("$apr1$") {
+        // $apr1$<salt:8>$<hash> — htpasswd_verify slices these positions unchecked
+        let rest = &stored["$apr1$".len()..];
+        if rest.len() > 9 && rest.as_bytes()[8] == b'$' {
+            return htpasswd_verify::Hash::parse(stored).check(password);
+        }
+        tracing::warn!("Malformed $apr1$ hash in basicAuth users; rejecting login");
+        return false;
+    }
+
+    if stored.starts_with("$2") {
+        // bcrypt: $2<a|b|x|y>$<cost:2>$<salt+hash:53>
+        let valid_shape = stored.len() == 60
+            && matches!(stored.as_bytes().get(2), Some(b'a' | b'b' | b'x' | b'y'))
+            && stored.as_bytes().get(3) == Some(&b'$')
+            && stored.as_bytes().get(6) == Some(&b'$')
+            && stored[4..6].bytes().all(|b| b.is_ascii_digit());
+        if valid_shape {
+            return htpasswd_verify::Hash::parse(stored).check(password);
+        }
+        tracing::warn!("Malformed bcrypt hash in basicAuth users; rejecting login");
+        return false;
+    }
+
+    if let Some(sha_hash) = stored.strip_prefix("{SHA}") {
+        return htpasswd_verify::Hash::SHA1(std::borrow::Cow::Borrowed(sha_hash)).check(password);
+    }
+
+    // Plaintext credential
+    constant_time_compare(stored, password)
 }
 
 /// Simple base64 decode (no external dependency)
@@ -266,5 +291,37 @@ mod tests {
         assert!(constant_time_compare("test", "test"));
         assert!(!constant_time_compare("test", "Test"));
         assert!(!constant_time_compare("test", "test1"));
+    }
+
+    #[test]
+    fn test_apr1_hash_verification() {
+        let hash = "$apr1$lZL6V/ci$eIMz/iKDkbtys/uU7LEK00";
+        assert!(verify_password(hash, "password"));
+        assert!(!verify_password(hash, "wrong"));
+        // The hash value itself must never work as the password
+        assert!(!verify_password(hash, hash));
+    }
+
+    #[test]
+    fn test_bcrypt_hash_verification() {
+        let hash = "$2y$05$nC6nErr9XZJuMJ57WyCob.EuZEjylDt2KaHfbfOtyb.EgL1I2jCVa";
+        assert!(verify_password(hash, "password"));
+        assert!(!verify_password(hash, "wrong"));
+        assert!(!verify_password(hash, hash));
+    }
+
+    #[test]
+    fn test_sha1_hash_verification() {
+        let hash = "{SHA}W6ph5Mm5Pz8GgiULbPgzG37mj9g=";
+        assert!(verify_password(hash, "password"));
+        assert!(!verify_password(hash, "wrong"));
+    }
+
+    #[test]
+    fn test_malformed_hashes_rejected_without_panic() {
+        assert!(!verify_password("$apr1$", "password"));
+        assert!(!verify_password("$apr1$short", "password"));
+        assert!(!verify_password("$2y$05$tooshort", "password"));
+        assert!(!verify_password("$2z$05$nC6nErr9XZJuMJ57WyCob.EuZEjylDt2KaHfbfOtyb.EgL1I2jCVa", "password"));
     }
 }
