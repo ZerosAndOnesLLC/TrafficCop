@@ -255,7 +255,11 @@ pub trait Store: Send + Sync {
 /// Create a store instance from the given configuration.
 pub async fn create_store(config: &StoreConfig) -> StoreResult<Arc<dyn Store>> {
     match config {
-        StoreConfig::Local => Ok(Arc::new(LocalStore::new())),
+        StoreConfig::Local => {
+            let store = Arc::new(LocalStore::new());
+            store.start_cleanup_task();
+            Ok(store)
+        }
         StoreConfig::Valkey(valkey_config) => {
             let store = ValkeyStore::new(valkey_config).await?;
             Ok(Arc::new(store))

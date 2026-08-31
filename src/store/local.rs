@@ -98,6 +98,27 @@ impl LocalStore {
             .as_millis() as u64
     }
 
+    /// Spawn a background task sweeping expired entries every 60 seconds so
+    /// the maps don't grow unbounded. Holds only a weak reference, so the
+    /// task exits when the store is dropped. No-op outside a tokio runtime.
+    pub fn start_cleanup_task(self: &std::sync::Arc<Self>) {
+        if tokio::runtime::Handle::try_current().is_err() {
+            return;
+        }
+        let store = std::sync::Arc::downgrade(self);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            interval.tick().await; // first tick completes immediately
+            loop {
+                interval.tick().await;
+                match store.upgrade() {
+                    Some(s) => s.cleanup(),
+                    None => break,
+                }
+            }
+        });
+    }
+
     /// Cleanup expired entries (should be called periodically)
     pub fn cleanup(&self) {
         let now = Instant::now();

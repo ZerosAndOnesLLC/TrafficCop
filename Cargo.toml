@@ -80,6 +80,7 @@ hostname = "0.4"
 # Async traits
 async-trait = "0.1"
 htpasswd-verify = "0.3.0"
+md-5 = "0.11.0"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["fs", "process"] }

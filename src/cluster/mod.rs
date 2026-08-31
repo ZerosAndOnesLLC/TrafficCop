@@ -49,7 +49,9 @@ pub async fn create_store_from_config(config: &ClusterConfig) -> anyhow::Result<
         }
         Some(ConfigStoreConfig::Local) | None => {
             info!("Using local in-memory store (single node mode)");
-            Ok(Arc::new(LocalStore::new()))
+            let store = Arc::new(LocalStore::new());
+            store.start_cleanup_task();
+            Ok(store)
         }
     }
 }

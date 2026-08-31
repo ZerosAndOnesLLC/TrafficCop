@@ -449,30 +449,47 @@ impl Store for ValkeyStore {
     async fn health_get_all(&self, service: &str) -> StoreResult<HashMap<String, HealthStatus>> {
         let pattern = self.key(&["health", service, "*"]);
 
-        let keys: Vec<String> = redis::cmd("KEYS")
-            .arg(&pattern)
+        // SCAN instead of KEYS: KEYS is O(N) over the entire keyspace and
+        // blocks Redis while it runs.
+        let mut keys: Vec<String> = Vec::new();
+        let mut cursor: u64 = 0;
+        loop {
+            let (next, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(100)
+                .query_async(&mut self.conn.clone())
+                .await
+                .map_err(|e| StoreError::Connection(e.to_string()))?;
+            keys.extend(batch);
+            cursor = next;
+            if cursor == 0 {
+                break;
+            }
+        }
+
+        if keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // Single MGET instead of N sequential GET round-trips
+        let values: Vec<Option<String>> = redis::cmd("MGET")
+            .arg(&keys)
             .query_async(&mut self.conn.clone())
             .await
             .map_err(|e| StoreError::Connection(e.to_string()))?;
 
+        let prefix = self.key(&["health", service, ""]);
         let mut result = HashMap::new();
-
-        for key in keys {
-            let json: Option<String> = self
-                .conn
-                .clone()
-                .get(&key)
-                .await
-                .map_err(|e| StoreError::Connection(e.to_string()))?;
-
+        for (key, json) in keys.iter().zip(values) {
             if let Some(json) = json
-                && let Ok(status) = serde_json::from_str::<HealthStatus>(&json) {
-                    // Extract server_url from key
-                    let prefix = self.key(&["health", service, ""]);
-                    if let Some(server_url) = key.strip_prefix(&prefix) {
-                        result.insert(server_url.to_string(), status);
-                    }
-                }
+                && let Ok(status) = serde_json::from_str::<HealthStatus>(&json)
+                && let Some(server_url) = key.strip_prefix(&prefix)
+            {
+                result.insert(server_url.to_string(), status);
+            }
         }
 
         Ok(result)
