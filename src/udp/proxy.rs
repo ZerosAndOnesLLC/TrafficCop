@@ -19,6 +19,11 @@ const DEFAULT_SESSION_TIMEOUT: Duration = Duration::from_secs(60);
 /// How often to clean up expired sessions
 const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
 
+/// Maximum concurrent in-flight datagram handler tasks per proxy.
+/// Datagrams beyond this are dropped (standard UDP backpressure) instead of
+/// spawning unbounded tasks under flood.
+const MAX_CONCURRENT_DATAGRAMS: usize = 1024;
+
 /// UDP proxy handler
 pub struct UdpProxy {
     router: Arc<UdpRouter>,
@@ -27,11 +32,14 @@ pub struct UdpProxy {
     sessions: Arc<DashMap<SocketAddr, UdpSession>>,
     /// Session timeout
     session_timeout: Duration,
+    /// Bounds concurrent datagram handler tasks (DoS protection)
+    datagram_permits: Arc<tokio::sync::Semaphore>,
     /// Metrics
     packets_received: AtomicU64,
     packets_sent: AtomicU64,
     bytes_received: AtomicU64,
     bytes_sent: AtomicU64,
+    packets_dropped: AtomicU64,
 }
 
 /// A UDP session tracking entry
@@ -55,10 +63,12 @@ impl UdpProxy {
             services,
             sessions: Arc::new(DashMap::new()),
             session_timeout: DEFAULT_SESSION_TIMEOUT,
+            datagram_permits: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_DATAGRAMS)),
             packets_received: AtomicU64::new(0),
             packets_sent: AtomicU64::new(0),
             bytes_received: AtomicU64::new(0),
             bytes_sent: AtomicU64::new(0),
+            packets_dropped: AtomicU64::new(0),
         }
     }
 
@@ -103,6 +113,22 @@ impl UdpProxy {
                             self.packets_received.fetch_add(1, Ordering::Relaxed);
                             self.bytes_received.fetch_add(len as u64, Ordering::Relaxed);
 
+                            // Bound concurrent handler tasks; drop datagrams
+                            // when saturated rather than spawning unbounded.
+                            let permit = match Arc::clone(&self.datagram_permits).try_acquire_owned() {
+                                Ok(permit) => permit,
+                                Err(_) => {
+                                    let dropped = self.packets_dropped.fetch_add(1, Ordering::Relaxed) + 1;
+                                    if dropped.is_power_of_two() {
+                                        warn!(
+                                            "UDP: dropping datagram from {} — {} in-flight handler limit reached ({} dropped total)",
+                                            client_addr, MAX_CONCURRENT_DATAGRAMS, dropped
+                                        );
+                                    }
+                                    continue;
+                                }
+                            };
+
                             let data = buf[..len].to_vec();
                             let proxy = Arc::clone(&self);
                             let socket = Arc::clone(&socket);
@@ -110,6 +136,7 @@ impl UdpProxy {
 
                             // Handle each datagram in a separate task
                             tokio::spawn(async move {
+                                let _permit = permit;
                                 if let Err(e) = proxy.handle_datagram(
                                     &socket,
                                     client_addr,

@@ -198,21 +198,22 @@ impl JwtMiddleware {
         let claims = parse_claims(&payload_json)
             .ok_or((StatusCode::UNAUTHORIZED, "Invalid JWT claims".to_string()))?;
 
-        // Validate standard claims
+        // Validate standard claims. Compared as signed i64 — casting a
+        // negative exp to u64 would wrap to a huge value and never expire.
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs();
+            .as_secs() as i64;
 
         // Check expiration
         if let Some(ClaimValue::Number(exp)) = claims.get("exp")
-            && (*exp as u64) < now {
+            && *exp < now {
                 return Err((StatusCode::UNAUTHORIZED, "Token expired".to_string()));
             }
 
         // Check not before
         if let Some(ClaimValue::Number(nbf)) = claims.get("nbf")
-            && (*nbf as u64) > now {
+            && *nbf > now {
                 return Err((StatusCode::UNAUTHORIZED, "Token not yet valid".to_string()));
             }
 
@@ -321,111 +322,52 @@ fn base64_url_decode_bytes(input: &str) -> Option<Vec<u8>> {
     Some(result)
 }
 
-/// Simple JSON parser for JWT header
+/// Parse the JWT header with a real JSON parser.
 fn parse_json_object(json: &str) -> Option<JwtHeader> {
-    let json = json.trim();
-    if !json.starts_with('{') || !json.ends_with('}') {
-        return None;
-    }
-
-    let mut alg = None;
-    let mut typ = None;
-
-    // Very simple JSON parsing for known fields
-    for pair in json[1..json.len()-1].split(',') {
-        let pair = pair.trim();
-        let mut parts = pair.splitn(2, ':');
-        let key = parts.next()?.trim().trim_matches('"');
-        let value = parts.next()?.trim().trim_matches('"');
-
-        match key {
-            "alg" => alg = Some(value.to_string()),
-            "typ" => typ = Some(value.to_string()),
-            _ => {}
-        }
-    }
-
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    let obj = value.as_object()?;
     Some(JwtHeader {
-        alg: alg?,
-        typ,
+        alg: obj.get("alg")?.as_str()?.to_string(),
+        typ: obj.get("typ").and_then(|v| v.as_str()).map(|s| s.to_string()),
     })
 }
 
-/// Parse JWT claims from JSON payload
+/// Parse JWT claims from the JSON payload with a real JSON parser.
 fn parse_claims(json: &str) -> Option<HashMap<String, ClaimValue>> {
-    let json = json.trim();
-    if !json.starts_with('{') || !json.ends_with('}') {
-        return None;
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    let obj = match value {
+        serde_json::Value::Object(map) => map,
+        _ => return None,
+    };
+
+    let mut claims = HashMap::with_capacity(obj.len());
+    for (key, val) in obj {
+        claims.insert(key, json_value_to_claim(val));
     }
-
-    let mut claims = HashMap::new();
-    let content = &json[1..json.len()-1];
-
-    // Simple state machine for parsing
-    let mut remaining = content;
-    while !remaining.is_empty() {
-        remaining = remaining.trim_start_matches(|c: char| c.is_whitespace() || c == ',');
-        if remaining.is_empty() {
-            break;
-        }
-
-        // Parse key
-        if !remaining.starts_with('"') {
-            break;
-        }
-        remaining = &remaining[1..];
-        let key_end = remaining.find('"')?;
-        let key = remaining[..key_end].to_string();
-        remaining = &remaining[key_end + 1..];
-
-        // Skip colon
-        remaining = remaining.trim_start();
-        if !remaining.starts_with(':') {
-            break;
-        }
-        remaining = remaining[1..].trim_start();
-
-        // Parse value
-        let value = if remaining.starts_with('"') {
-            remaining = &remaining[1..];
-            let val_end = remaining.find('"')?;
-            let val = remaining[..val_end].to_string();
-            remaining = &remaining[val_end + 1..];
-            ClaimValue::String(val)
-        } else if remaining.starts_with('[') {
-            // Array - simplified handling
-            let arr_end = remaining.find(']')?;
-            let arr_content = &remaining[1..arr_end];
-            remaining = &remaining[arr_end + 1..];
-            let items: Vec<String> = arr_content
-                .split(',')
-                .map(|s| s.trim().trim_matches('"').to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            ClaimValue::Array(items)
-        } else if remaining.starts_with("true") {
-            remaining = &remaining[4..];
-            ClaimValue::Bool(true)
-        } else if remaining.starts_with("false") {
-            remaining = &remaining[5..];
-            ClaimValue::Bool(false)
-        } else if remaining.starts_with("null") {
-            remaining = &remaining[4..];
-            ClaimValue::Null
-        } else {
-            // Number
-            let num_end = remaining.find(|c: char| c == ',' || c == '}' || c.is_whitespace())
-                .unwrap_or(remaining.len());
-            let num_str = &remaining[..num_end];
-            remaining = &remaining[num_end..];
-            let num: i64 = num_str.parse().ok()?;
-            ClaimValue::Number(num)
-        };
-
-        claims.insert(key, value);
-    }
-
     Some(claims)
+}
+
+fn json_value_to_claim(value: serde_json::Value) -> ClaimValue {
+    match value {
+        serde_json::Value::Null => ClaimValue::Null,
+        serde_json::Value::Bool(b) => ClaimValue::Bool(b),
+        serde_json::Value::Number(n) => {
+            // Timestamps issued as floats (some libraries do) truncate to seconds.
+            ClaimValue::Number(n.as_i64().unwrap_or_else(|| n.as_f64().unwrap_or(0.0) as i64))
+        }
+        serde_json::Value::String(s) => ClaimValue::String(s),
+        serde_json::Value::Array(items) => ClaimValue::Array(
+            items
+                .into_iter()
+                .map(|item| match item {
+                    serde_json::Value::String(s) => s,
+                    other => other.to_string(),
+                })
+                .collect(),
+        ),
+        // Nested objects keep their JSON form so forward_claims can pass them on.
+        obj @ serde_json::Value::Object(_) => ClaimValue::String(obj.to_string()),
+    }
 }
 
 /// HMAC-SHA256
@@ -746,6 +688,31 @@ mod tests {
         let mut config = test_config();
         config.secret = None;
         assert!(JwtMiddleware::new(config).is_none());
+    }
+
+    #[test]
+    fn test_negative_exp_rejected() {
+        let middleware = JwtMiddleware::new(test_config()).unwrap();
+
+        // A negative exp previously wrapped via `as u64` and never expired
+        let token = create_test_jwt("my-secret-key", r#"{"sub":"x","exp":-1}"#);
+        let req = Request::builder()
+            .header(AUTHORIZATION, format!("Bearer {}", token))
+            .body(())
+            .unwrap();
+
+        let result = middleware.validate(&req);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().1.contains("expired"));
+    }
+
+    #[test]
+    fn test_escaped_string_claims_parse() {
+        let json = r#"{"name":"John \"JD\" Doe","path":"a,b}c","n":-5}"#;
+        let claims = parse_claims(json).unwrap();
+        assert!(matches!(claims.get("name"), Some(ClaimValue::String(s)) if s == r#"John "JD" Doe"#));
+        assert!(matches!(claims.get("path"), Some(ClaimValue::String(s)) if s == "a,b}c"));
+        assert!(matches!(claims.get("n"), Some(ClaimValue::Number(-5))));
     }
 
     #[test]

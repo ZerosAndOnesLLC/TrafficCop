@@ -19,7 +19,20 @@ pub struct ForwardAuthMiddleware {
 
 impl ForwardAuthMiddleware {
     /// Create from config, building an HTTP client for the external auth service.
+    /// Returns `None` (middleware disabled) if the address is not a valid
+    /// http(s) URL, so a typo can't silently send credentials somewhere odd.
     pub fn new(config: ForwardAuthConfig) -> Option<Self> {
+        match url::Url::parse(&config.address) {
+            Ok(u) if matches!(u.scheme(), "http" | "https") && u.has_host() => {}
+            _ => {
+                warn!(
+                    "forwardAuth address '{}' is not a valid http(s) URL; middleware disabled",
+                    config.address
+                );
+                return None;
+            }
+        }
+
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
