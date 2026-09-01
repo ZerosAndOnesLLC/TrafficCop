@@ -2,61 +2,51 @@
 
 ## Supported Versions
 
+Only the latest released version of TrafficCop receives security fixes.
+
 | Version | Supported |
 |---------|-----------|
-| 1.x     | Yes       |
-| < 1.0   | No        |
-
-Only the latest release receives security updates. We recommend always running
-the most recent version.
+| 1.4.x   | ✅        |
+| < 1.4   | ❌        |
 
 ## Reporting a Vulnerability
 
-**Please do not report security vulnerabilities through public GitHub issues.**
+Please report security vulnerabilities privately — do **not** open a public
+GitHub issue.
 
-If you discover a security vulnerability in TrafficCop, please report it
-responsibly by emailing **security@zerosandones.us**. This allows us to assess
-and address the issue before it is publicly disclosed.
+- **Email:** support@zerosandones.us (subject line starting with `[SECURITY]`)
+- **GitHub:** use [private vulnerability reporting](https://github.com/ZerosAndOnesLLC/TrafficCop/security/advisories/new)
 
-### What to Include
+Include, where possible:
 
-- A description of the vulnerability
-- Steps to reproduce the issue
-- Affected versions
-- Any potential impact or severity assessment
-- Suggested fix, if you have one
+- A description of the vulnerability and its impact
+- Steps to reproduce (a minimal config is ideal)
+- The TrafficCop version and platform affected
 
-### What to Expect
+## What to Expect
 
-- **Acknowledgment** within 48 hours of your report
-- **Status update** within 7 days with an assessment and expected timeline
-- **Fix and disclosure** coordinated with you before any public announcement
+- **Acknowledgement** within 72 hours
+- **Assessment and severity triage** within 7 days
+- **Fix and coordinated disclosure**: we aim to release a patched version
+  before public disclosure, and will credit reporters in the release notes
+  unless they prefer otherwise
 
-We will credit reporters in the release notes unless you prefer to remain
-anonymous.
+## Scope
 
-## Disclosure Policy
+In scope: anything exploitable in the `trafficcop` binary or library —
+authentication bypasses in middleware (basicAuth, digestAuth, jwt,
+forwardAuth), request smuggling or header injection through the proxy,
+TLS/ACME handling flaws, denial-of-service vectors, and unsafe defaults.
 
-We follow coordinated disclosure:
+Out of scope: vulnerabilities in backends TrafficCop proxies to,
+misconfiguration of deployments, and issues requiring access to the host.
 
-1. Reporter submits vulnerability privately
-2. We confirm and assess the issue
-3. We develop and test a fix
-4. We release the fix and publish a security advisory
-5. We publicly disclose details after users have had time to update
+## Hardening Guidance
 
-We ask that reporters give us a reasonable window (typically 90 days) to address
-the issue before any public disclosure.
-
-## Security Best Practices
-
-When deploying TrafficCop in production:
-
-- **Keep up to date** — always run the latest release
-- **Use TLS** — terminate TLS at the proxy or use TLS passthrough
-- **Restrict the admin API** — bind it to localhost or use IP filtering
-- **Use strong ACME configuration** — prefer production Let's Encrypt with
-  valid email
-- **Review middleware configuration** — ensure rate limiting, IP filtering, and
-  authentication are configured appropriately
-- **Limit permissions** — run TrafficCop with minimal OS privileges
+- Set `api.token` — without it, mutating admin endpoints are disabled, but
+  read endpoints remain open on the admin port; bind the admin port to a
+  trusted network either way.
+- Configure `forwardedHeaders.trustedIPs` on entrypoints behind a load
+  balancer; by default all forwarded headers from untrusted peers are
+  stripped.
+- Set `transport.maxRequestBodyBytes` on internet-facing entrypoints.

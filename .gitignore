@@ -1,5 +1,4 @@
 /target
-Cargo.lock
 .env
 .env.local
 .env.development.local
@@ -10,3 +9,9 @@ Cargo.lock
 .claude
 .venv
 .venv/
+# cargo-fuzz
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/
+fuzz/Cargo.lock

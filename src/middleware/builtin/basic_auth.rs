@@ -80,21 +80,7 @@ impl BasicAuthMiddleware {
     /// Verify username and password
     fn verify(&self, username: &str, password: &str) -> bool {
         match self.users.get(username) {
-            Some(stored) => {
-                // Check if it's a hash or plaintext
-                if stored.starts_with("$apr1$") || stored.starts_with("$2") {
-                    // Apache MD5 or bcrypt hash - for now just compare directly
-                    // In production, you'd want proper hash verification
-                    // This is a placeholder for the hash comparison
-                    tracing::warn!(
-                        "Hash-based password verification not fully implemented, using plaintext comparison"
-                    );
-                    stored == password
-                } else {
-                    // Plaintext comparison (constant-time would be better for production)
-                    constant_time_compare(stored, password)
-                }
-            }
+            Some(stored) => verify_password(stored, password),
             None => false,
         }
     }
@@ -112,6 +98,115 @@ impl BasicAuthMiddleware {
     pub fn realm(&self) -> &str {
         &self.realm
     }
+}
+
+/// Verify a password against an htpasswd-style stored credential.
+/// Supports Apache MD5 (`$apr1$`), bcrypt (`$2a$`/`$2b$`/`$2y$`/`$2x$`),
+/// SHA1 (`{SHA}`), and plaintext (constant-time compare).
+fn verify_password(stored: &str, password: &str) -> bool {
+    if let Some(rest) = stored.strip_prefix("$apr1$") {
+        // $apr1$<salt, up to 8 chars>$<22-char hash>
+        let mut parts = rest.splitn(2, '$');
+        match (parts.next(), parts.next()) {
+            (Some(salt), Some(hash)) if !salt.is_empty() && salt.len() <= 8 && !hash.is_empty() => {
+                let computed = md5_apr1_encode(password.as_bytes(), salt.as_bytes());
+                return constant_time_compare(&computed, hash);
+            }
+            _ => {
+                tracing::warn!("Malformed $apr1$ hash in basicAuth users; rejecting login");
+                return false;
+            }
+        }
+    }
+
+    if stored.starts_with("$2") {
+        // bcrypt::verify returns Err on malformed hashes — treat as no match
+        return bcrypt::verify(password, stored).unwrap_or(false);
+    }
+
+    if let Some(sha_hash) = stored.strip_prefix("{SHA}") {
+        use base64::Engine;
+        let digest = sha1_smol::Sha1::from(password.as_bytes()).digest().bytes();
+        let computed = base64::engine::general_purpose::STANDARD.encode(digest);
+        return constant_time_compare(&computed, sha_hash);
+    }
+
+    // Plaintext credential
+    constant_time_compare(stored, password)
+}
+
+/// Apache MD5-crypt (`$apr1$`), the htpasswd default format. This is the
+/// standard APR1 key-stretching construction over the audited RustCrypto
+/// `md-5` primitive (1000 iterations + crypt-alphabet encoding), validated
+/// against htpasswd-generated vectors in tests.
+fn md5_apr1_encode(password: &[u8], salt: &[u8]) -> String {
+    use md5::{Digest, Md5};
+
+    let mut ctx = Md5::new();
+    ctx.update(password);
+    ctx.update(b"$apr1$");
+    ctx.update(salt);
+
+    let mut ctx1 = Md5::new();
+    ctx1.update(password);
+    ctx1.update(salt);
+    ctx1.update(password);
+    let digest1 = ctx1.finalize();
+
+    let mut remaining = password.len();
+    while remaining > 0 {
+        let take = remaining.min(16);
+        ctx.update(&digest1[..take]);
+        remaining -= take;
+    }
+
+    let mut i = password.len();
+    while i > 0 {
+        if i & 1 == 1 {
+            ctx.update([0u8]);
+        } else {
+            ctx.update(&password[..1]);
+        }
+        i >>= 1;
+    }
+
+    let mut fin: [u8; 16] = ctx.finalize().into();
+    for r in 0..1000u32 {
+        let mut c = Md5::new();
+        if r & 1 == 1 {
+            c.update(password);
+        } else {
+            c.update(fin);
+        }
+        if r % 3 != 0 {
+            c.update(salt);
+        }
+        if r % 7 != 0 {
+            c.update(password);
+        }
+        if r & 1 == 1 {
+            c.update(fin);
+        } else {
+            c.update(password);
+        }
+        fin = c.finalize().into();
+    }
+
+    fn push_group(out: &mut String, mut v: u32, n: usize) {
+        const CRYPT64: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+        for _ in 0..n {
+            out.push(CRYPT64[(v & 0x3f) as usize] as char);
+            v >>= 6;
+        }
+    }
+
+    let mut out = String::with_capacity(22);
+    for &(a, b, c) in &[(0usize, 6usize, 12usize), (1, 7, 13), (2, 8, 14), (3, 9, 15), (4, 10, 5)] {
+        let v = ((fin[a] as u32) << 16) | ((fin[b] as u32) << 8) | fin[c] as u32;
+        push_group(&mut out, v, 4);
+    }
+    push_group(&mut out, fin[11] as u32, 2);
+    out
 }
 
 /// Simple base64 decode (no external dependency)
@@ -266,5 +361,37 @@ mod tests {
         assert!(constant_time_compare("test", "test"));
         assert!(!constant_time_compare("test", "Test"));
         assert!(!constant_time_compare("test", "test1"));
+    }
+
+    #[test]
+    fn test_apr1_hash_verification() {
+        let hash = "$apr1$lZL6V/ci$eIMz/iKDkbtys/uU7LEK00";
+        assert!(verify_password(hash, "password"));
+        assert!(!verify_password(hash, "wrong"));
+        // The hash value itself must never work as the password
+        assert!(!verify_password(hash, hash));
+    }
+
+    #[test]
+    fn test_bcrypt_hash_verification() {
+        let hash = "$2y$05$nC6nErr9XZJuMJ57WyCob.EuZEjylDt2KaHfbfOtyb.EgL1I2jCVa";
+        assert!(verify_password(hash, "password"));
+        assert!(!verify_password(hash, "wrong"));
+        assert!(!verify_password(hash, hash));
+    }
+
+    #[test]
+    fn test_sha1_hash_verification() {
+        let hash = "{SHA}W6ph5Mm5Pz8GgiULbPgzG37mj9g=";
+        assert!(verify_password(hash, "password"));
+        assert!(!verify_password(hash, "wrong"));
+    }
+
+    #[test]
+    fn test_malformed_hashes_rejected_without_panic() {
+        assert!(!verify_password("$apr1$", "password"));
+        assert!(!verify_password("$apr1$short", "password"));
+        assert!(!verify_password("$2y$05$tooshort", "password"));
+        assert!(!verify_password("$2z$05$nC6nErr9XZJuMJ57WyCob.EuZEjylDt2KaHfbfOtyb.EgL1I2jCVa", "password"));
     }
 }

@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::{ResolvesServerCert, WebPkiClientVerifier};
 use rustls::{RootCertStore, ServerConfig};
-use rustls_pemfile::certs;
+use rustls::pki_types::pem::PemObject;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
@@ -193,7 +193,7 @@ fn load_certs(path: &str) -> Result<Vec<CertificateDer<'static>>> {
         .with_context(|| format!("Failed to open certificate file: {}", path))?;
     let mut reader = BufReader::new(file);
 
-    let certs: Vec<CertificateDer<'static>> = certs(&mut reader)
+    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_reader_iter(&mut reader)
         .collect::<Result<Vec<_>, _>>()
         .with_context(|| format!("Failed to parse certificates from: {}", path))?;
 

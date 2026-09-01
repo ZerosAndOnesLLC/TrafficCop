@@ -1,0 +1,40 @@
+[package]
+name = "trafficcop-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_norway = "0.9"
+hyper = "1"
+
+[dependencies.trafficcop]
+path = ".."
+
+[[bin]]
+name = "config_yaml"
+path = "fuzz_targets/config_yaml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "router_rule"
+path = "fuzz_targets/router_rule.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jwt_token"
+path = "fuzz_targets/jwt_token.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

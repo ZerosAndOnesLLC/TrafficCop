@@ -219,7 +219,7 @@ impl ConfigProviderManager {
         let content = provider.fetch().await?;
 
         // Parse the config
-        let new_config: Config = serde_yml::from_str(&content)
+        let new_config: Config = serde_norway::from_str(&content)
             .map_err(|e| anyhow::anyhow!("Failed to parse config: {}", e))?;
 
         // Validate
@@ -229,8 +229,8 @@ impl ConfigProviderManager {
         // Check if config changed
         let current = self.current_config.read().await;
         let config_changed = current.is_none() || {
-            let current_yaml = serde_yml::to_string(current.as_ref().unwrap()).unwrap_or_default();
-            let new_yaml = serde_yml::to_string(&new_config).unwrap_or_default();
+            let current_yaml = serde_norway::to_string(current.as_ref().unwrap()).unwrap_or_default();
+            let new_yaml = serde_norway::to_string(&new_config).unwrap_or_default();
             current_yaml != new_yaml
         };
         drop(current);
@@ -255,7 +255,7 @@ impl ConfigProviderManager {
         for provider in &self.providers {
             match provider.fetch().await {
                 Ok(content) => {
-                    let config: Config = serde_yml::from_str(&content)?;
+                    let config: Config = serde_norway::from_str(&content)?;
                     config.validate()?;
                     *self.current_config.write().await = Some(config.clone());
                     info!("Initial config loaded from {} provider", provider.name());

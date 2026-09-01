@@ -51,24 +51,22 @@ impl TraceContext {
     }
 
     fn fill_random(bytes: &mut [u8]) {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static STATE: AtomicU64 = AtomicU64::new(0);
+        use ring::rand::SecureRandom;
+        use std::sync::OnceLock;
+        static RNG: OnceLock<ring::rand::SystemRandom> = OnceLock::new();
 
-        let mut state = STATE.load(Ordering::Relaxed);
-        if state == 0 {
-            state = std::time::SystemTime::now()
+        let rng = RNG.get_or_init(ring::rand::SystemRandom::new);
+        if rng.fill(bytes).is_err() {
+            // OS RNG failure is effectively unreachable; fall back to a
+            // timestamp so trace IDs remain non-empty rather than panicking.
+            let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_nanos() as u64
-                | 1;
+                .as_nanos();
+            for (i, byte) in bytes.iter_mut().enumerate() {
+                *byte = (nanos >> ((i % 16) * 8)) as u8;
+            }
         }
-        for byte in bytes.iter_mut() {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            *byte = state as u8;
-        }
-        STATE.store(state, Ordering::Relaxed);
     }
 
     fn to_hex(bytes: &[u8]) -> String {

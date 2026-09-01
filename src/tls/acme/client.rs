@@ -170,9 +170,9 @@ impl AcmeClient {
     /// Load an EC key pair from PEM
     fn load_key_pair(&self, pem: &str) -> Result<EcdsaKeyPair> {
         let mut reader = std::io::BufReader::new(pem.as_bytes());
-        let key = rustls_pemfile::private_key(&mut reader)
-            .context("Failed to parse private key PEM")?
-            .ok_or_else(|| anyhow::anyhow!("No private key in PEM"))?;
+        use rustls::pki_types::pem::PemObject;
+        let key = rustls::pki_types::PrivateKeyDer::from_pem_reader(&mut reader)
+            .context("Failed to parse private key PEM")?;
 
         let key_bytes = match key {
             rustls::pki_types::PrivateKeyDer::Pkcs8(bytes) => bytes.secret_pkcs8_der().to_vec(),

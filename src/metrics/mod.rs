@@ -1,8 +1,35 @@
 //! Prometheus metrics collection for HTTP requests, backend health, and connection tracking.
 
-use metrics::{counter, gauge, histogram, describe_counter, describe_gauge, describe_histogram};
+use metrics::{counter, gauge, histogram, describe_counter, describe_gauge, describe_histogram, SharedString};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use std::sync::OnceLock;
 use std::time::Duration;
+
+/// Allocation-free label for an HTTP method (all standard methods are static).
+fn method_label(method: &str) -> SharedString {
+    match method {
+        "GET" => SharedString::const_str("GET"),
+        "POST" => SharedString::const_str("POST"),
+        "PUT" => SharedString::const_str("PUT"),
+        "DELETE" => SharedString::const_str("DELETE"),
+        "HEAD" => SharedString::const_str("HEAD"),
+        "OPTIONS" => SharedString::const_str("OPTIONS"),
+        "PATCH" => SharedString::const_str("PATCH"),
+        "TRACE" => SharedString::const_str("TRACE"),
+        "CONNECT" => SharedString::const_str("CONNECT"),
+        other => SharedString::from_owned(other.to_string()),
+    }
+}
+
+/// Allocation-free label for a status code, backed by a lazily built table.
+fn status_label(status: u16) -> SharedString {
+    static TABLE: OnceLock<Vec<String>> = OnceLock::new();
+    let table = TABLE.get_or_init(|| (0u16..600).map(|s| s.to_string()).collect());
+    match table.get(status as usize) {
+        Some(s) => SharedString::const_str(s.as_str()),
+        None => SharedString::from_owned(status.to_string()),
+    }
+}
 
 /// Register all metric descriptions with the global recorder.
 pub fn init_metrics() {
@@ -62,11 +89,11 @@ impl Metrics {
         duration: Duration,
     ) {
         let labels = [
-            ("entrypoint", entrypoint.to_string()),
-            ("router", router.to_string()),
-            ("service", service.to_string()),
-            ("method", method.to_string()),
-            ("status", status.to_string()),
+            ("entrypoint", SharedString::from_owned(entrypoint.to_string())),
+            ("router", SharedString::from_owned(router.to_string())),
+            ("service", SharedString::from_owned(service.to_string())),
+            ("method", method_label(method)),
+            ("status", status_label(status)),
         ];
 
         counter!("http_requests_total", &labels).increment(1);
@@ -77,9 +104,9 @@ impl Metrics {
     #[inline]
     pub fn record_backend_request(service: &str, server: &str, status: u16, duration: Duration) {
         let labels = [
-            ("service", service.to_string()),
-            ("server", server.to_string()),
-            ("status", status.to_string()),
+            ("service", SharedString::from_owned(service.to_string())),
+            ("server", SharedString::from_owned(server.to_string())),
+            ("status", status_label(status)),
         ];
 
         counter!("backend_requests_total", &labels).increment(1);

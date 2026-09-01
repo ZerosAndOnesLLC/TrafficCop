@@ -25,7 +25,7 @@ impl Config {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {:?}", path))?;
 
-        let mut config: Config = serde_yml::from_str(&content)
+        let mut config: Config = serde_norway::from_str(&content)
             .with_context(|| "Failed to parse config file")?;
 
         config.validate()?;

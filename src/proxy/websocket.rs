@@ -112,6 +112,16 @@ pub async fn handle_websocket_upgrade(
         .and_then(|v| v.to_str().ok())
         .unwrap_or(&addr);
 
+    // Defense in depth: these values are interpolated into a hand-built HTTP
+    // request. hyper's HeaderValue/Uri already forbid CR/LF, but reject any
+    // control characters outright so header injection stays impossible even
+    // if an upstream invariant changes.
+    let ws_key_str = ws_key.to_str().unwrap_or("");
+    if contains_ctl(path) || contains_ctl(host_header) || contains_ctl(ws_key_str) {
+        error!("WebSocket: control characters in upgrade request values; rejecting");
+        return Ok(error_response(StatusCode::BAD_REQUEST));
+    }
+
     // Send HTTP upgrade request manually
     let upgrade_request = format!(
         "GET {} HTTP/1.1\r\n\
@@ -123,7 +133,7 @@ pub async fn handle_websocket_upgrade(
          \r\n",
         path,
         host_header,
-        ws_key.to_str().unwrap_or("")
+        ws_key_str
     );
 
     // Write upgrade request to backend
@@ -201,6 +211,11 @@ pub async fn handle_websocket_upgrade(
 }
 
 /// Find the end of HTTP headers (\r\n\r\n)
+/// True if the string contains ASCII control characters (including CR/LF).
+fn contains_ctl(s: &str) -> bool {
+    s.bytes().any(|b| b < 0x20 || b == 0x7f)
+}
+
 fn find_header_end(buf: &[u8]) -> Option<usize> {
     for i in 0..buf.len().saturating_sub(3) {
         if &buf[i..i + 4] == b"\r\n\r\n" {
