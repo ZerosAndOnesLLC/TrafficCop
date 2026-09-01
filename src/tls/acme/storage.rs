@@ -83,7 +83,8 @@ impl StoredCertificate {
     /// Parse the PEM certificate chain into rustls `CertificateDer` format.
     pub fn parse_certificate(&self) -> Result<Vec<CertificateDer<'static>>> {
         let mut reader = BufReader::new(self.certificate_pem.as_bytes());
-        let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
+        use rustls::pki_types::pem::PemObject;
+        let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_reader_iter(&mut reader)
             .collect::<Result<Vec<_>, _>>()
             .context("Failed to parse stored certificate")?;
         Ok(certs)
@@ -92,9 +93,9 @@ impl StoredCertificate {
     /// Parse the PEM private key into rustls `PrivateKeyDer` format.
     pub fn parse_private_key(&self) -> Result<PrivateKeyDer<'static>> {
         let mut reader = BufReader::new(self.private_key_pem.as_bytes());
-        let key = rustls_pemfile::private_key(&mut reader)
-            .context("Failed to parse private key")?
-            .ok_or_else(|| anyhow::anyhow!("No private key found"))?;
+        use rustls::pki_types::pem::PemObject;
+        let key = PrivateKeyDer::from_pem_reader(&mut reader)
+            .context("Failed to parse private key")?;
         Ok(key)
     }
 }

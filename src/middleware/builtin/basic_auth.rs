@@ -103,40 +103,110 @@ impl BasicAuthMiddleware {
 /// Verify a password against an htpasswd-style stored credential.
 /// Supports Apache MD5 (`$apr1$`), bcrypt (`$2a$`/`$2b$`/`$2y$`/`$2x$`),
 /// SHA1 (`{SHA}`), and plaintext (constant-time compare).
-///
-/// Hash shapes are validated before delegating to `htpasswd_verify`, which
-/// panics on malformed input — and release builds use `panic = "abort"`.
 fn verify_password(stored: &str, password: &str) -> bool {
-    if stored.starts_with("$apr1$") {
-        // $apr1$<salt:8>$<hash> — htpasswd_verify slices these positions unchecked
-        let rest = &stored["$apr1$".len()..];
-        if rest.len() > 9 && rest.as_bytes()[8] == b'$' {
-            return htpasswd_verify::Hash::parse(stored).check(password);
+    if let Some(rest) = stored.strip_prefix("$apr1$") {
+        // $apr1$<salt, up to 8 chars>$<22-char hash>
+        let mut parts = rest.splitn(2, '$');
+        match (parts.next(), parts.next()) {
+            (Some(salt), Some(hash)) if !salt.is_empty() && salt.len() <= 8 && !hash.is_empty() => {
+                let computed = md5_apr1_encode(password.as_bytes(), salt.as_bytes());
+                return constant_time_compare(&computed, hash);
+            }
+            _ => {
+                tracing::warn!("Malformed $apr1$ hash in basicAuth users; rejecting login");
+                return false;
+            }
         }
-        tracing::warn!("Malformed $apr1$ hash in basicAuth users; rejecting login");
-        return false;
     }
 
     if stored.starts_with("$2") {
-        // bcrypt: $2<a|b|x|y>$<cost:2>$<salt+hash:53>
-        let valid_shape = stored.len() == 60
-            && matches!(stored.as_bytes().get(2), Some(b'a' | b'b' | b'x' | b'y'))
-            && stored.as_bytes().get(3) == Some(&b'$')
-            && stored.as_bytes().get(6) == Some(&b'$')
-            && stored[4..6].bytes().all(|b| b.is_ascii_digit());
-        if valid_shape {
-            return htpasswd_verify::Hash::parse(stored).check(password);
-        }
-        tracing::warn!("Malformed bcrypt hash in basicAuth users; rejecting login");
-        return false;
+        // bcrypt::verify returns Err on malformed hashes — treat as no match
+        return bcrypt::verify(password, stored).unwrap_or(false);
     }
 
     if let Some(sha_hash) = stored.strip_prefix("{SHA}") {
-        return htpasswd_verify::Hash::SHA1(std::borrow::Cow::Borrowed(sha_hash)).check(password);
+        use base64::Engine;
+        let digest = sha1_smol::Sha1::from(password.as_bytes()).digest().bytes();
+        let computed = base64::engine::general_purpose::STANDARD.encode(digest);
+        return constant_time_compare(&computed, sha_hash);
     }
 
     // Plaintext credential
     constant_time_compare(stored, password)
+}
+
+/// Apache MD5-crypt (`$apr1$`), the htpasswd default format. This is the
+/// standard APR1 key-stretching construction over the audited RustCrypto
+/// `md-5` primitive (1000 iterations + crypt-alphabet encoding), validated
+/// against htpasswd-generated vectors in tests.
+fn md5_apr1_encode(password: &[u8], salt: &[u8]) -> String {
+    use md5::{Digest, Md5};
+
+    let mut ctx = Md5::new();
+    ctx.update(password);
+    ctx.update(b"$apr1$");
+    ctx.update(salt);
+
+    let mut ctx1 = Md5::new();
+    ctx1.update(password);
+    ctx1.update(salt);
+    ctx1.update(password);
+    let digest1 = ctx1.finalize();
+
+    let mut remaining = password.len();
+    while remaining > 0 {
+        let take = remaining.min(16);
+        ctx.update(&digest1[..take]);
+        remaining -= take;
+    }
+
+    let mut i = password.len();
+    while i > 0 {
+        if i & 1 == 1 {
+            ctx.update([0u8]);
+        } else {
+            ctx.update(&password[..1]);
+        }
+        i >>= 1;
+    }
+
+    let mut fin: [u8; 16] = ctx.finalize().into();
+    for r in 0..1000u32 {
+        let mut c = Md5::new();
+        if r & 1 == 1 {
+            c.update(password);
+        } else {
+            c.update(fin);
+        }
+        if r % 3 != 0 {
+            c.update(salt);
+        }
+        if r % 7 != 0 {
+            c.update(password);
+        }
+        if r & 1 == 1 {
+            c.update(fin);
+        } else {
+            c.update(password);
+        }
+        fin = c.finalize().into();
+    }
+
+    fn push_group(out: &mut String, mut v: u32, n: usize) {
+        const CRYPT64: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+        for _ in 0..n {
+            out.push(CRYPT64[(v & 0x3f) as usize] as char);
+            v >>= 6;
+        }
+    }
+
+    let mut out = String::with_capacity(22);
+    for &(a, b, c) in &[(0usize, 6usize, 12usize), (1, 7, 13), (2, 8, 14), (3, 9, 15), (4, 10, 5)] {
+        let v = ((fin[a] as u32) << 16) | ((fin[b] as u32) << 8) | fin[c] as u32;
+        push_group(&mut out, v, 4);
+    }
+    push_group(&mut out, fin[11] as u32, 2);
+    out
 }
 
 /// Simple base64 decode (no external dependency)

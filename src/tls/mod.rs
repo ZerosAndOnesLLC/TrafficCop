@@ -21,7 +21,8 @@ use anyhow::{Context, Result};
 use rustls::pki_types::CertificateDer;
 use rustls::server::ResolvesServerCert;
 use rustls::ServerConfig;
-use rustls_pemfile::{certs, private_key};
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::PrivateKeyDer;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
@@ -74,16 +75,15 @@ impl TlsAcceptor {
         let cert_file = File::open(cert_path)
             .with_context(|| format!("Failed to open cert file: {}", cert_path))?;
         let mut cert_reader = BufReader::new(cert_file);
-        let certs: Vec<CertificateDer<'static>> = certs(&mut cert_reader)
+        let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_reader_iter(&mut cert_reader)
             .collect::<Result<Vec<_>, _>>()
             .context("Failed to parse certificates")?;
 
         let key_file = File::open(key_path)
             .with_context(|| format!("Failed to open key file: {}", key_path))?;
         let mut key_reader = BufReader::new(key_file);
-        let key = private_key(&mut key_reader)
-            .context("Failed to parse private key")?
-            .ok_or_else(|| anyhow::anyhow!("No private key found in file"))?;
+        let key = PrivateKeyDer::from_pem_reader(&mut key_reader)
+            .context("Failed to parse private key")?;
 
         let mut config = ServerConfig::builder()
             .with_no_client_auth()
