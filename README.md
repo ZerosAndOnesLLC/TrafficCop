@@ -40,7 +40,10 @@ A high-performance reverse proxy and load balancer written in Rust with **100% T
 - **Let's Encrypt ACME**: Automatic certificate provisioning and renewal
 - **SNI-based Certificates**: Multiple certificates per listener with automatic selection
 - **mTLS**: Mutual TLS with client certificates
-- **JWT Validation**: Built-in JWT middleware (HS256, HS384, HS512)
+- **JWT Validation**: Built-in JWT middleware (HS256, HS384, HS512); the `none` algorithm is rejected
+- **Forwarded-Header Trust** (v1.5.0): `forwardedHeaders.trustedIPs` enforced per entrypoint — `X-Forwarded-*`/`X-Real-IP` from untrusted peers are stripped, preventing client IP spoofing
+- **Request Body Limits** (v1.5.0): `transport.maxRequestBodyBytes` rejects oversized requests with 413
+- **Admin API Authentication** (v1.5.0): bearer-token auth via `api.token`; without a token, mutating admin endpoints are disabled
 
 ### Middleware Pipeline (23 Built-in Middlewares)
 - **Rate Limiting**: Token bucket with distributed support
@@ -334,6 +337,35 @@ http:
         sourceRange:
           - "10.0.0.0/8"
 ```
+
+### Entrypoint Security Options (v1.5.0)
+
+```yaml
+entryPoints:
+  websecure:
+    address: ":443"
+    # Trust forwarded headers only from these peers. Headers from any other
+    # peer (X-Forwarded-For/-Host/-Proto/-Port/-Server, X-Real-IP) are
+    # stripped before routing, middleware, and logging. Default: trust no one.
+    forwardedHeaders:
+      trustedIPs:
+        - "10.0.0.0/8"      # e.g. your load balancer
+      # insecure: true      # trust everyone (not recommended)
+    transport:
+      # Reject requests whose Content-Length exceeds this (413). Default: unlimited.
+      maxRequestBodyBytes: 10485760  # 10 MiB
+
+# Admin API authentication. All endpoints except /ping require
+# "Authorization: Bearer <token>". Without a token configured, mutating
+# (non-GET) admin endpoints are disabled.
+api:
+  dashboard: true
+  token: "${ADMIN_API_TOKEN}"
+```
+
+**htpasswd hash support**: `basicAuth` verifies bcrypt (`$2y$…`), Apache MD5
+(`$apr1$…`), SHA1 (`{SHA}…`), and plaintext entries — the standard formats
+produced by `htpasswd`.
 
 ### TLS Configuration
 

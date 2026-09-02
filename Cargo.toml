@@ -1,6 +1,6 @@
 [package]
 name = "trafficcop"
-version = "1.4.12"
+version = "1.5.0"
 edition = "2024"
 authors = ["Zeros and Ones LLC <support@zerosandones.us>"]
 description = "TrafficCop Traffic Manager - High-performance reverse proxy and load balancer"
@@ -8,6 +8,7 @@ license = "MIT"
 repository = "https://github.com/ZerosAndOnesLLC/TrafficCop"
 keywords = ["proxy", "load-balancer", "reverse-proxy", "http", "grpc"]
 categories = ["network-programming", "web-programming::http-server"]
+exclude = ["badass.md", "fuzz/", ".github/", "working-plan.md"]
 
 [dependencies]
 # Async runtime
