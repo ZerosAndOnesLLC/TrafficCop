@@ -1,20 +1,30 @@
 name: Security
 
+# PR checks only (fmt, clippy, tests, advisories). Full builds run on
+# `gh release create` (see release.yaml). Public repo: everything here stays
+# on GitHub-hosted runners so fork PRs never reach self-hosted machines.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   schedule:
-    # Weekly run so new advisories against pinned deps still get flagged
+    # Weekly run so new advisories against pinned deps still get flagged.
+    # Only the audit/deny jobs run on the schedule.
     - cron: "0 6 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   audit:
     name: cargo audit
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
@@ -24,18 +34,38 @@ jobs:
   deny:
     name: cargo deny
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories licenses sources
 
-  test:
-    name: check & test
+  fmt:
+    name: rustfmt
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  test:
+    name: clippy & test
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # One RUSTFLAGS for clippy and test so both share the same cache.
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --all-targets
+      - run: cargo clippy --all-targets
       - run: cargo test --lib
