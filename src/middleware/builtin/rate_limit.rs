@@ -2,8 +2,8 @@ use crate::config::RateLimitConfig;
 use crate::store::Store;
 use dashmap::DashMap;
 use std::net::IpAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 
@@ -142,9 +142,10 @@ impl RateLimitMiddleware {
     /// Check if request is allowed by arbitrary key
     #[inline]
     pub fn is_allowed_by_key(&self, key: &str) -> bool {
-        let bucket = self.buckets.entry(key.to_string()).or_insert_with(|| {
-            TokenBucket::new(self.config.burst.max(self.config.average))
-        });
+        let bucket = self
+            .buckets
+            .entry(key.to_string())
+            .or_insert_with(|| TokenBucket::new(self.config.burst.max(self.config.average)));
 
         let allowed = bucket.try_acquire(self.config.average, self.config.burst.max(1));
 
@@ -177,7 +178,10 @@ impl RateLimitMiddleware {
         if let Some(store) = &self.store {
             let window_secs = self.config.period.as_std().as_secs().max(1);
 
-            match store.rate_limit_check(key, self.config.average, window_secs).await {
+            match store
+                .rate_limit_check(key, self.config.average, window_secs)
+                .await
+            {
                 Ok((allowed, _remaining, _reset)) => {
                     if !allowed {
                         debug!("Distributed rate limit exceeded for key: {}", key);
@@ -186,7 +190,10 @@ impl RateLimitMiddleware {
                 }
                 Err(e) => {
                     // If store is unavailable, fall back to local decision
-                    warn!("Distributed rate limit check failed: {}, using local result", e);
+                    warn!(
+                        "Distributed rate limit check failed: {}, using local result",
+                        e
+                    );
                     local_allowed
                 }
             }
@@ -232,9 +239,8 @@ impl RateLimitMiddleware {
             now.duration_since(last_instant) < max_age
         });
 
-        self.last_sync.retain(|_, last| {
-            now.duration_since(*last) < max_age
-        });
+        self.last_sync
+            .retain(|_, last| now.duration_since(*last) < max_age);
     }
 
     /// Get current bucket count (for metrics)
@@ -245,7 +251,8 @@ impl RateLimitMiddleware {
     /// Check if we should sync to distributed store
     fn maybe_schedule_sync(&self, key: &str) {
         let now = Instant::now();
-        let should_sync = self.last_sync
+        let should_sync = self
+            .last_sync
             .get(key)
             .map(|last| now.duration_since(*last) >= self.sync_interval)
             .unwrap_or(true);
@@ -305,7 +312,8 @@ impl DistributedRateLimiter {
 
     /// Check if request is allowed (hits store every time)
     pub async fn is_allowed(&self, key: &str) -> Result<RateLimitResult, crate::store::StoreError> {
-        let (allowed, remaining, reset_time) = self.store
+        let (allowed, remaining, reset_time) = self
+            .store
             .rate_limit_check(key, self.limit, self.window_secs)
             .await?;
 
@@ -424,11 +432,19 @@ mod tests {
 
         let total_allowed = allowed_count.load(Ordering::Relaxed);
         // Should never exceed burst (100) by more than a small margin from token refill
-        assert!(total_allowed <= 110, "allowed {} requests, expected <= 110", total_allowed);
+        assert!(
+            total_allowed <= 110,
+            "allowed {} requests, expected <= 110",
+            total_allowed
+        );
 
         // Verify no underflow: remaining tokens should be reasonable (not quintillions)
         let remaining = limiter.remaining_by_key("stress-test");
-        assert!(remaining <= 100, "remaining {} tokens, suspected underflow", remaining);
+        assert!(
+            remaining <= 100,
+            "remaining {} tokens, suspected underflow",
+            remaining
+        );
     }
 
     #[test]

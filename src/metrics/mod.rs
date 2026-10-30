@@ -1,6 +1,8 @@
 //! Prometheus metrics collection for HTTP requests, backend health, and connection tracking.
 
-use metrics::{counter, gauge, histogram, describe_counter, describe_gauge, describe_histogram, SharedString};
+use metrics::{
+    SharedString, counter, describe_counter, describe_gauge, describe_histogram, gauge, histogram,
+};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -49,7 +51,10 @@ pub fn init_metrics() {
         "backend_request_duration_seconds",
         "Backend request duration in seconds"
     );
-    describe_gauge!("backend_health", "Backend health status (1=healthy, 0=unhealthy)");
+    describe_gauge!(
+        "backend_health",
+        "Backend health status (1=healthy, 0=unhealthy)"
+    );
     describe_gauge!("active_connections", "Number of active connections");
     describe_gauge!("connection_pool_size", "Size of connection pool");
 }
@@ -68,7 +73,8 @@ pub fn start_metrics_server(addr: &str) -> Result<(), Box<dyn std::error::Error 
 }
 
 /// Install the Prometheus recorder and return a handle for manual metric rendering.
-pub fn get_prometheus_handle() -> Result<PrometheusHandle, Box<dyn std::error::Error + Send + Sync>> {
+pub fn get_prometheus_handle() -> Result<PrometheusHandle, Box<dyn std::error::Error + Send + Sync>>
+{
     let handle = PrometheusBuilder::new().install_recorder()?;
     init_metrics();
     Ok(handle)
@@ -89,7 +95,10 @@ impl Metrics {
         duration: Duration,
     ) {
         let labels = [
-            ("entrypoint", SharedString::from_owned(entrypoint.to_string())),
+            (
+                "entrypoint",
+                SharedString::from_owned(entrypoint.to_string()),
+            ),
             ("router", SharedString::from_owned(router.to_string())),
             ("service", SharedString::from_owned(service.to_string())),
             ("method", method_label(method)),

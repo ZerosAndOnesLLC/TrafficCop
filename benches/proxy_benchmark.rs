@@ -1,7 +1,7 @@
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use std::hint::black_box;
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use hyper::HeaderMap;
 use std::collections::HashMap;
+use std::hint::black_box;
 
 // Re-implement minimal versions for benchmarking without full crate dependency
 // This allows isolated benchmarking of core algorithms
@@ -23,10 +23,9 @@ mod rule_bench {
     impl Rule {
         pub fn matches(&self, host: Option<&str>, path: &str) -> bool {
             match self {
-                Rule::Host(expected) => {
-                    host.map(|h| h.eq_ignore_ascii_case(expected))
-                        .unwrap_or(false)
-                }
+                Rule::Host(expected) => host
+                    .map(|h| h.eq_ignore_ascii_case(expected))
+                    .unwrap_or(false),
                 Rule::HostRegex(re) => host.map(|h| re.is_match(h)).unwrap_or(false),
                 Rule::PathPrefix(prefix) => path.starts_with(prefix),
                 Rule::PathRegex(re) => re.is_match(path),
@@ -46,45 +45,33 @@ fn router_matching_benchmark(c: &mut Criterion) {
     let host_rule = Rule::Host("example.com".to_string());
 
     group.bench_function("host_match_hit", |b| {
-        b.iter(|| {
-            black_box(host_rule.matches(Some("example.com"), "/"))
-        })
+        b.iter(|| black_box(host_rule.matches(Some("example.com"), "/")))
     });
 
     group.bench_function("host_match_miss", |b| {
-        b.iter(|| {
-            black_box(host_rule.matches(Some("other.com"), "/"))
-        })
+        b.iter(|| black_box(host_rule.matches(Some("other.com"), "/")))
     });
 
     // Path prefix match
     let path_rule = Rule::PathPrefix("/api/v1".to_string());
 
     group.bench_function("path_prefix_hit", |b| {
-        b.iter(|| {
-            black_box(path_rule.matches(None, "/api/v1/users"))
-        })
+        b.iter(|| black_box(path_rule.matches(None, "/api/v1/users")))
     });
 
     group.bench_function("path_prefix_miss", |b| {
-        b.iter(|| {
-            black_box(path_rule.matches(None, "/web/page"))
-        })
+        b.iter(|| black_box(path_rule.matches(None, "/web/page")))
     });
 
     // Regex path match
     let regex_rule = Rule::PathRegex(regex::Regex::new(r"^/api/v\d+/users/\d+$").unwrap());
 
     group.bench_function("path_regex_hit", |b| {
-        b.iter(|| {
-            black_box(regex_rule.matches(None, "/api/v1/users/12345"))
-        })
+        b.iter(|| black_box(regex_rule.matches(None, "/api/v1/users/12345")))
     });
 
     group.bench_function("path_regex_miss", |b| {
-        b.iter(|| {
-            black_box(regex_rule.matches(None, "/api/v1/posts/abc"))
-        })
+        b.iter(|| black_box(regex_rule.matches(None, "/api/v1/posts/abc")))
     });
 
     // Complex combined rule: Host && PathPrefix
@@ -94,15 +81,11 @@ fn router_matching_benchmark(c: &mut Criterion) {
     );
 
     group.bench_function("combined_and_hit", |b| {
-        b.iter(|| {
-            black_box(combined.matches(Some("api.example.com"), "/v2/endpoint"))
-        })
+        b.iter(|| black_box(combined.matches(Some("api.example.com"), "/v2/endpoint")))
     });
 
     group.bench_function("combined_and_miss", |b| {
-        b.iter(|| {
-            black_box(combined.matches(Some("api.example.com"), "/v1/endpoint"))
-        })
+        b.iter(|| black_box(combined.matches(Some("api.example.com"), "/v1/endpoint")))
     });
 
     // Or rule with multiple hosts
@@ -115,21 +98,15 @@ fn router_matching_benchmark(c: &mut Criterion) {
     );
 
     group.bench_function("multi_host_or_first", |b| {
-        b.iter(|| {
-            black_box(or_rule.matches(Some("a.example.com"), "/"))
-        })
+        b.iter(|| black_box(or_rule.matches(Some("a.example.com"), "/")))
     });
 
     group.bench_function("multi_host_or_last", |b| {
-        b.iter(|| {
-            black_box(or_rule.matches(Some("c.example.com"), "/"))
-        })
+        b.iter(|| black_box(or_rule.matches(Some("c.example.com"), "/")))
     });
 
     group.bench_function("multi_host_or_miss", |b| {
-        b.iter(|| {
-            black_box(or_rule.matches(Some("d.example.com"), "/"))
-        })
+        b.iter(|| black_box(or_rule.matches(Some("d.example.com"), "/")))
     });
 
     group.finish();
@@ -380,7 +357,7 @@ fn header_manipulation_benchmark(c: &mut Criterion) {
 }
 
 fn circuit_breaker_benchmark(c: &mut Criterion) {
-    use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
+    use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
     let mut group = c.benchmark_group("circuit_breaker");
 
@@ -425,9 +402,7 @@ fn circuit_breaker_benchmark(c: &mut Criterion) {
     let cb = CircuitBreaker::new(5);
 
     group.bench_function("circuit_breaker_check", |b| {
-        b.iter(|| {
-            black_box(cb.can_execute())
-        })
+        b.iter(|| black_box(cb.can_execute()))
     });
 
     group.bench_function("circuit_breaker_record_success", |b| {

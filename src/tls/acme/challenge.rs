@@ -21,16 +21,11 @@ impl ChallengeHandler {
 
     /// Returns true if the request path matches `/.well-known/acme-challenge/`.
     pub fn is_challenge_request<B>(req: &Request<B>) -> bool {
-        req.uri()
-            .path()
-            .starts_with("/.well-known/acme-challenge/")
+        req.uri().path().starts_with("/.well-known/acme-challenge/")
     }
 
     /// Respond to an ACME challenge request with the key authorization, if known.
-    pub async fn handle<B>(
-        &self,
-        req: &Request<B>,
-    ) -> Option<Response<Full<Bytes>>> {
+    pub async fn handle<B>(&self, req: &Request<B>) -> Option<Response<Full<Bytes>>> {
         let path = req.uri().path();
 
         if !path.starts_with("/.well-known/acme-challenge/") {

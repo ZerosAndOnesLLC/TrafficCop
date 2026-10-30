@@ -1,5 +1,5 @@
-use hyper::header::HeaderValue;
 use hyper::HeaderMap;
+use hyper::header::HeaderValue;
 
 /// W3C Trace Context for distributed tracing
 /// See: <https://www.w3.org/TR/trace-context/>
@@ -150,67 +150,69 @@ pub fn extract_context(headers: &HeaderMap) -> TraceContext {
     // Try W3C traceparent header first
     if let Some(traceparent) = headers.get("traceparent")
         && let Ok(value) = traceparent.to_str()
-            && let Some(mut ctx) = TraceContext::parse_traceparent(value) {
-                // Also extract tracestate if present
-                if let Some(tracestate) = headers.get("tracestate")
-                    && let Ok(state) = tracestate.to_str() {
-                        ctx.trace_state = Some(state.to_string());
-                    }
-                return ctx;
-            }
+        && let Some(mut ctx) = TraceContext::parse_traceparent(value)
+    {
+        // Also extract tracestate if present
+        if let Some(tracestate) = headers.get("tracestate")
+            && let Ok(state) = tracestate.to_str()
+        {
+            ctx.trace_state = Some(state.to_string());
+        }
+        return ctx;
+    }
 
     // Try B3 propagation format (used by Zipkin)
-    if let (Some(trace_id), Some(span_id)) = (
-        headers.get("x-b3-traceid"),
-        headers.get("x-b3-spanid"),
-    )
-        && let (Ok(tid), Ok(sid)) = (trace_id.to_str(), span_id.to_str()) {
-            let sampled = headers
-                .get("x-b3-sampled")
-                .and_then(|v| v.to_str().ok())
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(true);
+    if let (Some(trace_id), Some(span_id)) =
+        (headers.get("x-b3-traceid"), headers.get("x-b3-spanid"))
+        && let (Ok(tid), Ok(sid)) = (trace_id.to_str(), span_id.to_str())
+    {
+        let sampled = headers
+            .get("x-b3-sampled")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(true);
 
-            // Normalize trace_id to 32 chars (pad if necessary)
-            let normalized_trace_id = if tid.len() == 16 {
-                format!("0000000000000000{}", tid)
+        // Normalize trace_id to 32 chars (pad if necessary)
+        let normalized_trace_id = if tid.len() == 16 {
+            format!("0000000000000000{}", tid)
+        } else {
+            tid.to_string()
+        };
+
+        return TraceContext {
+            trace_id: normalized_trace_id.to_lowercase(),
+            parent_id: sid.to_lowercase(),
+            trace_flags: if sampled { 0x01 } else { 0x00 },
+            trace_state: None,
+        };
+    }
+
+    // Try Jaeger format
+    if let Some(uber_ctx) = headers.get("uber-trace-id")
+        && let Ok(value) = uber_ctx.to_str()
+    {
+        // Format: trace_id:span_id:parent_id:flags
+        let parts: Vec<&str> = value.split(':').collect();
+        if parts.len() >= 4 {
+            let trace_id = parts[0];
+            let span_id = parts[1];
+            let flags = u8::from_str_radix(parts[3], 16).unwrap_or(1);
+
+            // Normalize trace_id to 32 chars
+            let normalized_trace_id = if trace_id.len() == 16 {
+                format!("0000000000000000{}", trace_id)
             } else {
-                tid.to_string()
+                trace_id.to_string()
             };
 
             return TraceContext {
                 trace_id: normalized_trace_id.to_lowercase(),
-                parent_id: sid.to_lowercase(),
-                trace_flags: if sampled { 0x01 } else { 0x00 },
+                parent_id: span_id.to_lowercase(),
+                trace_flags: flags,
                 trace_state: None,
             };
         }
-
-    // Try Jaeger format
-    if let Some(uber_ctx) = headers.get("uber-trace-id")
-        && let Ok(value) = uber_ctx.to_str() {
-            // Format: trace_id:span_id:parent_id:flags
-            let parts: Vec<&str> = value.split(':').collect();
-            if parts.len() >= 4 {
-                let trace_id = parts[0];
-                let span_id = parts[1];
-                let flags = u8::from_str_radix(parts[3], 16).unwrap_or(1);
-
-                // Normalize trace_id to 32 chars
-                let normalized_trace_id = if trace_id.len() == 16 {
-                    format!("0000000000000000{}", trace_id)
-                } else {
-                    trace_id.to_string()
-                };
-
-                return TraceContext {
-                    trace_id: normalized_trace_id.to_lowercase(),
-                    parent_id: span_id.to_lowercase(),
-                    trace_flags: flags,
-                    trace_state: None,
-                };
-            }
-        }
+    }
 
     // No trace context found, create new one
     TraceContext::new()
@@ -225,9 +227,10 @@ pub fn inject_context(headers: &mut HeaderMap, ctx: &TraceContext) {
 
     // Inject tracestate if present
     if let Some(ref state) = ctx.trace_state
-        && let Ok(value) = HeaderValue::from_str(state) {
-            headers.insert("tracestate", value);
-        }
+        && let Ok(value) = HeaderValue::from_str(state)
+    {
+        headers.insert("tracestate", value);
+    }
 
     // Also inject B3 headers for compatibility
     if let Ok(value) = HeaderValue::from_str(&ctx.trace_id) {
@@ -352,22 +355,28 @@ mod tests {
     #[test]
     fn test_invalid_traceparent() {
         // Wrong version
-        assert!(TraceContext::parse_traceparent(
-            "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
-        )
-        .is_none());
+        assert!(
+            TraceContext::parse_traceparent(
+                "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+            )
+            .is_none()
+        );
 
         // All zero trace_id
-        assert!(TraceContext::parse_traceparent(
-            "00-00000000000000000000000000000000-00f067aa0ba902b7-01"
-        )
-        .is_none());
+        assert!(
+            TraceContext::parse_traceparent(
+                "00-00000000000000000000000000000000-00f067aa0ba902b7-01"
+            )
+            .is_none()
+        );
 
         // All zero span_id
-        assert!(TraceContext::parse_traceparent(
-            "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01"
-        )
-        .is_none());
+        assert!(
+            TraceContext::parse_traceparent(
+                "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01"
+            )
+            .is_none()
+        );
 
         // Wrong format
         assert!(TraceContext::parse_traceparent("invalid").is_none());

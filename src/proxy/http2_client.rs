@@ -52,16 +52,21 @@ impl Http2ConnectionPool {
     }
 
     /// Get existing connection or create a new one
-    async fn get_or_create_connection(&self, host: &str, port: u16) -> Result<Arc<Http2Connection>, Http2Error> {
+    async fn get_or_create_connection(
+        &self,
+        host: &str,
+        port: u16,
+    ) -> Result<Arc<Http2Connection>, Http2Error> {
         let key = format!("{}:{}", host, port);
 
         // Check for existing connection
         {
             let connections = self.connections.read().await;
             if let Some(conn) = connections.get(&key)
-                && conn.is_ready().await {
-                    return Ok(Arc::clone(conn));
-                }
+                && conn.is_ready().await
+            {
+                return Ok(Arc::clone(conn));
+            }
         }
 
         // Create new connection
@@ -77,12 +82,18 @@ impl Http2ConnectionPool {
     }
 
     /// Create a new HTTP/2 connection
-    async fn create_connection(&self, host: &str, port: u16) -> Result<Arc<Http2Connection>, Http2Error> {
+    async fn create_connection(
+        &self,
+        host: &str,
+        port: u16,
+    ) -> Result<Arc<Http2Connection>, Http2Error> {
         let addr = format!("{}:{}", host, port);
 
         debug!("Creating new HTTP/2 connection to {}", addr);
 
-        let stream = TcpStream::connect(&addr).await.map_err(Http2Error::Connect)?;
+        let stream = TcpStream::connect(&addr)
+            .await
+            .map_err(Http2Error::Connect)?;
 
         // Set TCP options
         stream.set_nodelay(true).ok();

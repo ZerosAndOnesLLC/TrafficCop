@@ -59,40 +59,36 @@ impl Rule {
         headers: &hyper::HeaderMap,
     ) -> bool {
         match self {
-            Rule::Host(expected) => {
-                host.map(|h| h.eq_ignore_ascii_case(expected)).unwrap_or(false)
-            }
-            Rule::HostRegex(re) => {
-                host.map(|h| re.is_match(h)).unwrap_or(false)
-            }
+            Rule::Host(expected) => host
+                .map(|h| h.eq_ignore_ascii_case(expected))
+                .unwrap_or(false),
+            Rule::HostRegex(re) => host.map(|h| re.is_match(h)).unwrap_or(false),
             Rule::Path(expected) => path == expected,
             Rule::PathPrefix(prefix) => path.starts_with(prefix),
             Rule::PathRegex(re) => re.is_match(path),
-            Rule::Header(name, value) => {
-                headers
-                    .get(name)
-                    .and_then(|v| v.to_str().ok())
-                    .map(|v| v == value)
-                    .unwrap_or(false)
-            }
-            Rule::HeaderRegex(name, re) => {
-                headers
-                    .get(name)
-                    .and_then(|v| v.to_str().ok())
-                    .map(|v| re.is_match(v))
-                    .unwrap_or(false)
-            }
-            Rule::Query(key, expected_value) => {
-                query.map(|q| Self::query_param_matches(q, key, expected_value)).unwrap_or(false)
-            }
-            Rule::Method(expected_method) => {
-                method.map(|m| m.eq_ignore_ascii_case(expected_method)).unwrap_or(false)
-            }
+            Rule::Header(name, value) => headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v == value)
+                .unwrap_or(false),
+            Rule::HeaderRegex(name, re) => headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(|v| re.is_match(v))
+                .unwrap_or(false),
+            Rule::Query(key, expected_value) => query
+                .map(|q| Self::query_param_matches(q, key, expected_value))
+                .unwrap_or(false),
+            Rule::Method(expected_method) => method
+                .map(|m| m.eq_ignore_ascii_case(expected_method))
+                .unwrap_or(false),
             Rule::And(a, b) => {
-                a.matches(host, path, query, method, headers) && b.matches(host, path, query, method, headers)
+                a.matches(host, path, query, method, headers)
+                    && b.matches(host, path, query, method, headers)
             }
             Rule::Or(a, b) => {
-                a.matches(host, path, query, method, headers) || b.matches(host, path, query, method, headers)
+                a.matches(host, path, query, method, headers)
+                    || b.matches(host, path, query, method, headers)
             }
             Rule::Not(r) => !r.matches(host, path, query, method, headers),
         }
@@ -126,15 +122,17 @@ impl Rule {
                 let mut hex = String::new();
                 for _ in 0..2 {
                     if let Some(&next) = chars.peek()
-                        && next.is_ascii_hexdigit() {
-                            hex.push(chars.next().unwrap());
-                        }
+                        && next.is_ascii_hexdigit()
+                    {
+                        hex.push(chars.next().unwrap());
+                    }
                 }
                 if hex.len() == 2
-                    && let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                        result.push(byte as char);
-                        continue;
-                    }
+                    && let Ok(byte) = u8::from_str_radix(&hex, 16)
+                {
+                    result.push(byte as char);
+                    continue;
+                }
                 // If decode failed, keep original
                 result.push('%');
                 result.push_str(&hex);
@@ -239,34 +237,34 @@ impl RuleParser {
 
         match func_name {
             "Host" => {
-                let host = args
-                    .first()
-                    .ok_or_else(|| RuleParseError::InvalidSyntax("Host requires an argument".into()))?;
+                let host = args.first().ok_or_else(|| {
+                    RuleParseError::InvalidSyntax("Host requires an argument".into())
+                })?;
                 Ok(Rule::Host(host.clone()))
             }
             "HostRegexp" => {
-                let pattern = args
-                    .first()
-                    .ok_or_else(|| RuleParseError::InvalidSyntax("HostRegexp requires an argument".into()))?;
+                let pattern = args.first().ok_or_else(|| {
+                    RuleParseError::InvalidSyntax("HostRegexp requires an argument".into())
+                })?;
                 let re = Regex::new(pattern)?;
                 Ok(Rule::HostRegex(re))
             }
             "Path" => {
-                let path = args
-                    .first()
-                    .ok_or_else(|| RuleParseError::InvalidSyntax("Path requires an argument".into()))?;
+                let path = args.first().ok_or_else(|| {
+                    RuleParseError::InvalidSyntax("Path requires an argument".into())
+                })?;
                 Ok(Rule::Path(path.clone()))
             }
             "PathPrefix" => {
-                let prefix = args
-                    .first()
-                    .ok_or_else(|| RuleParseError::InvalidSyntax("PathPrefix requires an argument".into()))?;
+                let prefix = args.first().ok_or_else(|| {
+                    RuleParseError::InvalidSyntax("PathPrefix requires an argument".into())
+                })?;
                 Ok(Rule::PathPrefix(prefix.clone()))
             }
             "PathRegexp" => {
-                let pattern = args
-                    .first()
-                    .ok_or_else(|| RuleParseError::InvalidSyntax("PathRegexp requires an argument".into()))?;
+                let pattern = args.first().ok_or_else(|| {
+                    RuleParseError::InvalidSyntax("PathRegexp requires an argument".into())
+                })?;
                 let re = Regex::new(pattern)?;
                 Ok(Rule::PathRegex(re))
             }
@@ -288,9 +286,9 @@ impl RuleParser {
                 Ok(Rule::HeaderRegex(args[0].clone(), re))
             }
             "Method" => {
-                let method = args
-                    .first()
-                    .ok_or_else(|| RuleParseError::InvalidSyntax("Method requires an argument".into()))?;
+                let method = args.first().ok_or_else(|| {
+                    RuleParseError::InvalidSyntax("Method requires an argument".into())
+                })?;
                 Ok(Rule::Method(method.clone()))
             }
             "Query" => {

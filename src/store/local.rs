@@ -1,6 +1,4 @@
-use super::{
-    HealthStatus, NodeInfo, NodeStatus, Store, StoreResult,
-};
+use super::{HealthStatus, NodeInfo, NodeStatus, Store, StoreResult};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use parking_lot::RwLock;
@@ -447,9 +445,11 @@ impl Store for LocalStore {
 
         // Check if there's an existing leader
         if let Some(entry) = self.leaders.get(task)
-            && entry.expires_at > now && entry.node_id != node_id {
-                return Ok(false); // Someone else is leader
-            }
+            && entry.expires_at > now
+            && entry.node_id != node_id
+        {
+            return Ok(false); // Someone else is leader
+        }
 
         // Acquire leadership
         self.leaders.insert(
@@ -465,10 +465,11 @@ impl Store for LocalStore {
 
     async fn leader_release(&self, task: &str, node_id: &str) -> StoreResult<()> {
         if let Some(entry) = self.leaders.get(task)
-            && entry.node_id == node_id {
-                drop(entry);
-                self.leaders.remove(task);
-            }
+            && entry.node_id == node_id
+        {
+            drop(entry);
+            self.leaders.remove(task);
+        }
         Ok(())
     }
 
@@ -527,7 +528,12 @@ mod tests {
 
         // Set session
         store
-            .sticky_session_set("api", "session123", "http://server1:8080", Duration::from_secs(3600))
+            .sticky_session_set(
+                "api",
+                "session123",
+                "http://server1:8080",
+                Duration::from_secs(3600),
+            )
             .await
             .unwrap();
 

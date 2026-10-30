@@ -23,7 +23,12 @@ impl IpAllowListMiddleware {
         let excluded_networks = config
             .ip_strategy
             .as_ref()
-            .map(|s| s.excluded_ips.iter().filter_map(|e| parse_network(e)).collect())
+            .map(|s| {
+                s.excluded_ips
+                    .iter()
+                    .filter_map(|e| parse_network(e))
+                    .collect()
+            })
             .unwrap_or_default();
 
         Self {
@@ -58,20 +63,21 @@ impl IpAllowListMiddleware {
     /// Get IP from X-Forwarded-For based on strategy
     pub fn get_client_ip(&self, forwarded_for: Option<&str>, remote_addr: IpAddr) -> IpAddr {
         if let Some(strategy) = &self.ip_strategy
-            && let Some(xff) = forwarded_for {
-                let ips: Vec<&str> = xff.split(',').map(|s| s.trim()).collect();
-                let depth = strategy.depth as usize;
+            && let Some(xff) = forwarded_for
+        {
+            let ips: Vec<&str> = xff.split(',').map(|s| s.trim()).collect();
+            let depth = strategy.depth as usize;
 
-                if depth < ips.len() {
-                    let idx = ips.len() - 1 - depth;
-                    if let Ok(ip) = ips[idx].parse::<IpAddr>() {
-                        let should_exclude = self.excluded_networks.iter().any(|net| net.contains(ip));
-                        if !should_exclude {
-                            return ip;
-                        }
+            if depth < ips.len() {
+                let idx = ips.len() - 1 - depth;
+                if let Ok(ip) = ips[idx].parse::<IpAddr>() {
+                    let should_exclude = self.excluded_networks.iter().any(|net| net.contains(ip));
+                    if !should_exclude {
+                        return ip;
                     }
                 }
             }
+        }
 
         remote_addr
     }
@@ -102,7 +108,12 @@ impl IpDenyListMiddleware {
         let excluded_networks = config
             .ip_strategy
             .as_ref()
-            .map(|s| s.excluded_ips.iter().filter_map(|e| parse_network(e)).collect())
+            .map(|s| {
+                s.excluded_ips
+                    .iter()
+                    .filter_map(|e| parse_network(e))
+                    .collect()
+            })
             .unwrap_or_default();
 
         Self {
@@ -127,20 +138,21 @@ impl IpDenyListMiddleware {
     /// Get IP from X-Forwarded-For based on strategy
     pub fn get_client_ip(&self, forwarded_for: Option<&str>, remote_addr: IpAddr) -> IpAddr {
         if let Some(strategy) = &self.ip_strategy
-            && let Some(xff) = forwarded_for {
-                let ips: Vec<&str> = xff.split(',').map(|s| s.trim()).collect();
-                let depth = strategy.depth as usize;
+            && let Some(xff) = forwarded_for
+        {
+            let ips: Vec<&str> = xff.split(',').map(|s| s.trim()).collect();
+            let depth = strategy.depth as usize;
 
-                if depth < ips.len() {
-                    let idx = ips.len() - 1 - depth;
-                    if let Ok(ip) = ips[idx].parse::<IpAddr>() {
-                        let should_exclude = self.excluded_networks.iter().any(|net| net.contains(ip));
-                        if !should_exclude {
-                            return ip;
-                        }
+            if depth < ips.len() {
+                let idx = ips.len() - 1 - depth;
+                if let Ok(ip) = ips[idx].parse::<IpAddr>() {
+                    let should_exclude = self.excluded_networks.iter().any(|net| net.contains(ip));
+                    if !should_exclude {
+                        return ip;
                     }
                 }
             }
+        }
 
         remote_addr
     }
@@ -254,8 +266,10 @@ mod tests {
 
         // X-Forwarded-For: client, proxy1, proxy2
         // depth=1 means skip proxy2, use proxy1
-        let client_ip =
-            filter.get_client_ip(Some("10.0.0.1, 192.168.1.1, 172.16.0.1"), "127.0.0.1".parse().unwrap());
+        let client_ip = filter.get_client_ip(
+            Some("10.0.0.1, 192.168.1.1, 172.16.0.1"),
+            "127.0.0.1".parse().unwrap(),
+        );
 
         assert_eq!(client_ip, "192.168.1.1".parse::<IpAddr>().unwrap());
     }

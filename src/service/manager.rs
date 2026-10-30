@@ -23,30 +23,31 @@ impl ServiceManager {
         let services = DashMap::new();
 
         for (name, service_config) in config.services() {
-            let (balancer, health_statuses, server_count) = if let Some(lb) = &service_config.load_balancer {
-                let balancer = Some(LoadBalancer::from_load_balancer(lb));
-                let statuses: Vec<Arc<HealthStatus>> = lb
-                    .servers
-                    .iter()
-                    .map(|_| Arc::new(HealthStatus::new()))
-                    .collect();
-                (balancer, statuses, lb.servers.len())
-            } else if let Some(w) = &service_config.weighted {
-                // TODO: Implement weighted service routing
-                (None, Vec::new(), w.services.len())
-            } else if service_config.mirroring.is_some() {
-                // Mirroring service - references other services
-                (None, Vec::new(), 1)
-            } else if let Some(f) = &service_config.failover {
-                // Failover service - references primary and fallback services
-                info!(
-                    "Failover service '{}' configured: primary='{}', fallback='{}'",
-                    name, f.service, f.fallback
-                );
-                (None, Vec::new(), 2)
-            } else {
-                (None, Vec::new(), 0)
-            };
+            let (balancer, health_statuses, server_count) =
+                if let Some(lb) = &service_config.load_balancer {
+                    let balancer = Some(LoadBalancer::from_load_balancer(lb));
+                    let statuses: Vec<Arc<HealthStatus>> = lb
+                        .servers
+                        .iter()
+                        .map(|_| Arc::new(HealthStatus::new()))
+                        .collect();
+                    (balancer, statuses, lb.servers.len())
+                } else if let Some(w) = &service_config.weighted {
+                    // TODO: Implement weighted service routing
+                    (None, Vec::new(), w.services.len())
+                } else if service_config.mirroring.is_some() {
+                    // Mirroring service - references other services
+                    (None, Vec::new(), 1)
+                } else if let Some(f) = &service_config.failover {
+                    // Failover service - references primary and fallback services
+                    info!(
+                        "Failover service '{}' configured: primary='{}', fallback='{}'",
+                        name, f.service, f.fallback
+                    );
+                    (None, Vec::new(), 2)
+                } else {
+                    (None, Vec::new(), 0)
+                };
 
             services.insert(
                 name.clone(),
@@ -57,7 +58,10 @@ impl ServiceManager {
                 },
             );
 
-            info!("Registered service '{}' with {} servers", name, server_count);
+            info!(
+                "Registered service '{}' with {} servers",
+                name, server_count
+            );
         }
 
         Self { services }
@@ -78,24 +82,25 @@ impl ServiceManager {
             let service = entry.value();
 
             if let Some(lb) = &service.config.load_balancer
-                && let Some(health_config) = &lb.health_check {
-                    for (idx, server) in lb.servers.iter().enumerate() {
-                        let checker = HealthChecker::new(
-                            health_config.clone(),
-                            server.url.clone(),
-                            Arc::clone(&service.health_statuses[idx]),
-                        );
+                && let Some(health_config) = &lb.health_check
+            {
+                for (idx, server) in lb.servers.iter().enumerate() {
+                    let checker = HealthChecker::new(
+                        health_config.clone(),
+                        server.url.clone(),
+                        Arc::clone(&service.health_statuses[idx]),
+                    );
 
-                        info!(
-                            "Starting health checker for service '{}' server '{}'",
-                            service_name, server.url
-                        );
+                    info!(
+                        "Starting health checker for service '{}' server '{}'",
+                        service_name, server.url
+                    );
 
-                        tokio::spawn(async move {
-                            checker.start().await;
-                        });
-                    }
+                    tokio::spawn(async move {
+                        checker.start().await;
+                    });
                 }
+            }
         }
     }
 

@@ -1,7 +1,7 @@
 use crate::config::FailoverService;
 use crate::health::HealthStatus;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Failover service router - routes to primary service unless it's unhealthy
 pub struct FailoverServiceRouter {

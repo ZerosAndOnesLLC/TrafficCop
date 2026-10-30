@@ -1,9 +1,9 @@
 //! WebSocket upgrade detection and transparent bidirectional proxying.
 
 use bytes::Bytes;
-use http_body_util::{combinators::BoxBody, BodyExt, Empty};
-use hyper::header::{HeaderValue, CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE};
-use hyper::{body::Incoming, Request, Response, StatusCode};
+use http_body_util::{BodyExt, Empty, combinators::BoxBody};
+use hyper::header::{CONNECTION, HeaderValue, SEC_WEBSOCKET_KEY, UPGRADE};
+use hyper::{Request, Response, StatusCode, body::Incoming};
 use hyper_util::rt::TokioIo;
 use rustls::pki_types::ServerName;
 use std::net::SocketAddr;
@@ -73,7 +73,10 @@ pub async fn handle_websocket_upgrade(
         let server_name = match ServerName::try_from(host.to_string()) {
             Ok(n) => n,
             Err(e) => {
-                error!("Invalid TLS server name '{}' for WebSocket backend: {}", host, e);
+                error!(
+                    "Invalid TLS server name '{}' for WebSocket backend: {}",
+                    host, e
+                );
                 return Ok(error_response(StatusCode::BAD_GATEWAY));
             }
         };
@@ -102,7 +105,9 @@ pub async fn handle_websocket_upgrade(
         .cloned()
         .unwrap_or_else(|| HeaderValue::from_static(""));
 
-    let path = req.uri().path_and_query()
+    let path = req
+        .uri()
+        .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or("/");
 
@@ -131,9 +136,7 @@ pub async fn handle_websocket_upgrade(
          Sec-WebSocket-Key: {}\r\n\
          Sec-WebSocket-Version: 13\r\n\
          \r\n",
-        path,
-        host_header,
-        ws_key_str
+        path, host_header, ws_key_str
     );
 
     // Write upgrade request to backend
@@ -167,7 +170,10 @@ pub async fn handle_websocket_upgrade(
             // Parse the response
             let response_text = String::from_utf8_lossy(&buf[..pos]);
             if !response_text.contains("101") {
-                error!("Backend rejected WebSocket upgrade: {}", response_text.lines().next().unwrap_or(""));
+                error!(
+                    "Backend rejected WebSocket upgrade: {}",
+                    response_text.lines().next().unwrap_or("")
+                );
                 return Ok(error_response(StatusCode::BAD_GATEWAY));
             }
             break;
@@ -186,7 +192,10 @@ pub async fn handle_websocket_upgrade(
         .status(StatusCode::SWITCHING_PROTOCOLS)
         .header(UPGRADE, "websocket")
         .header(CONNECTION, "Upgrade")
-        .header("Sec-WebSocket-Accept", compute_accept_key(ws_key.to_str().unwrap_or("")))
+        .header(
+            "Sec-WebSocket-Accept",
+            compute_accept_key(ws_key.to_str().unwrap_or("")),
+        )
         .body(empty_body())
         .unwrap();
 

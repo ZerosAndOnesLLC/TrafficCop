@@ -11,8 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, info};
 
 /// Storage for ACME account and certificates
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AcmeStorage {
     /// ACME account information
     #[serde(default)]
@@ -94,12 +93,11 @@ impl StoredCertificate {
     pub fn parse_private_key(&self) -> Result<PrivateKeyDer<'static>> {
         let mut reader = BufReader::new(self.private_key_pem.as_bytes());
         use rustls::pki_types::pem::PemObject;
-        let key = PrivateKeyDer::from_pem_reader(&mut reader)
-            .context("Failed to parse private key")?;
+        let key =
+            PrivateKeyDer::from_pem_reader(&mut reader).context("Failed to parse private key")?;
         Ok(key)
     }
 }
-
 
 /// Thread-safe storage manager
 pub struct StorageManager {
@@ -182,13 +180,16 @@ impl StorageManager {
             for cert_domain in &cert.domains {
                 if let Some(wildcard_base) = cert_domain.strip_prefix("*.")
                     && domain.ends_with(wildcard_base)
-                        && domain[..domain.len() - wildcard_base.len()].matches('.').count() == 0
-                    {
-                        // Single label before the wildcard base
-                        if !domain[..domain.len() - wildcard_base.len() - 1].contains('.') {
-                            return Some(cert.clone());
-                        }
+                    && domain[..domain.len() - wildcard_base.len()]
+                        .matches('.')
+                        .count()
+                        == 0
+                {
+                    // Single label before the wildcard base
+                    if !domain[..domain.len() - wildcard_base.len() - 1].contains('.') {
+                        return Some(cert.clone());
                     }
+                }
             }
         }
 
@@ -240,7 +241,6 @@ impl StorageManager {
         Arc::clone(&self.data)
     }
 }
-
 
 #[cfg(test)]
 mod tests {

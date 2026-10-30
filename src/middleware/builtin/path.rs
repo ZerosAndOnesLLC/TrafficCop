@@ -1,6 +1,9 @@
-use crate::config::{AddPrefixConfig, ReplacePathConfig, ReplacePathRegexConfig, StripPrefixConfig, StripPrefixRegexConfig};
-use regex::Regex;
+use crate::config::{
+    AddPrefixConfig, ReplacePathConfig, ReplacePathRegexConfig, StripPrefixConfig,
+    StripPrefixRegexConfig,
+};
 use hyper::Uri;
+use regex::Regex;
 
 /// StripPrefix middleware removes the specified prefixes from the request URL path
 pub struct StripPrefixMiddleware {
@@ -54,11 +57,7 @@ pub struct StripPrefixRegexMiddleware {
 impl StripPrefixRegexMiddleware {
     /// Create from config. Returns `None` if any regex pattern is invalid.
     pub fn new(config: StripPrefixRegexConfig) -> Option<Self> {
-        let patterns: Result<Vec<Regex>, _> = config
-            .regex
-            .iter()
-            .map(|r| Regex::new(r))
-            .collect();
+        let patterns: Result<Vec<Regex>, _> = config.regex.iter().map(|r| Regex::new(r)).collect();
 
         patterns.ok().map(|patterns| Self { patterns })
     }
@@ -119,9 +118,7 @@ pub struct ReplacePathMiddleware {
 impl ReplacePathMiddleware {
     /// Create from config with the replacement path.
     pub fn new(config: ReplacePathConfig) -> Self {
-        Self {
-            path: config.path,
-        }
+        Self { path: config.path }
     }
 
     /// Transform the URI by replacing the path

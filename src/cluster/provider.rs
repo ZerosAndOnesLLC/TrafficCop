@@ -63,7 +63,8 @@ impl HttpConfigProvider {
             }
         }
 
-        let client = builder.build()
+        let client = builder
+            .build()
             .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
 
         Ok(Self {
@@ -95,7 +96,9 @@ impl ConfigProvider for HttpConfigProvider {
             request = request.header("If-None-Match", etag);
         }
 
-        let response = request.send().await
+        let response = request
+            .send()
+            .await
             .map_err(|e| anyhow::anyhow!("HTTP request failed: {}", e))?;
 
         // Handle 304 Not Modified
@@ -112,11 +115,14 @@ impl ConfigProvider for HttpConfigProvider {
 
         // Store ETag for next request
         if let Some(etag) = response.headers().get("etag")
-            && let Ok(etag_str) = etag.to_str() {
-                *self.last_etag.write().await = Some(etag_str.to_string());
-            }
+            && let Ok(etag_str) = etag.to_str()
+        {
+            *self.last_etag.write().await = Some(etag_str.to_string());
+        }
 
-        let content = response.text().await
+        let content = response
+            .text()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to read response body: {}", e))?;
 
         Ok(content)
@@ -213,7 +219,9 @@ impl ConfigProviderManager {
 
     /// Poll a specific provider
     async fn poll_provider(&self, provider_idx: usize) -> anyhow::Result<()> {
-        let provider = self.providers.get(provider_idx)
+        let provider = self
+            .providers
+            .get(provider_idx)
             .ok_or_else(|| anyhow::anyhow!("Provider not found"))?;
 
         let content = provider.fetch().await?;
@@ -223,13 +231,15 @@ impl ConfigProviderManager {
             .map_err(|e| anyhow::anyhow!("Failed to parse config: {}", e))?;
 
         // Validate
-        new_config.validate()
+        new_config
+            .validate()
             .map_err(|e| anyhow::anyhow!("Config validation failed: {}", e))?;
 
         // Check if config changed
         let current = self.current_config.read().await;
         let config_changed = current.is_none() || {
-            let current_yaml = serde_norway::to_string(current.as_ref().unwrap()).unwrap_or_default();
+            let current_yaml =
+                serde_norway::to_string(current.as_ref().unwrap()).unwrap_or_default();
             let new_yaml = serde_norway::to_string(&new_config).unwrap_or_default();
             current_yaml != new_yaml
         };

@@ -120,7 +120,11 @@ pub trait Store: Send + Sync {
     // =========================================================================
 
     /// Get the server URL for a sticky session
-    async fn sticky_session_get(&self, service: &str, session_id: &str) -> StoreResult<Option<String>>;
+    async fn sticky_session_get(
+        &self,
+        service: &str,
+        session_id: &str,
+    ) -> StoreResult<Option<String>>;
 
     /// Set a sticky session mapping
     async fn sticky_session_set(
@@ -139,7 +143,11 @@ pub trait Store: Send + Sync {
     // =========================================================================
 
     /// Get health status for a backend server
-    async fn health_get(&self, service: &str, server_url: &str) -> StoreResult<Option<HealthStatus>>;
+    async fn health_get(
+        &self,
+        service: &str,
+        server_url: &str,
+    ) -> StoreResult<Option<HealthStatus>>;
 
     /// Set health status for a backend server
     async fn health_set(
@@ -209,10 +217,13 @@ pub trait Store: Send + Sync {
     async fn subscribe_config_changes(&self) -> StoreResult<tokio::sync::broadcast::Receiver<()>>;
 
     /// Subscribe to health status changes
-    async fn subscribe_health_changes(&self) -> StoreResult<tokio::sync::broadcast::Receiver<(String, String, HealthStatus)>>;
+    async fn subscribe_health_changes(
+        &self,
+    ) -> StoreResult<tokio::sync::broadcast::Receiver<(String, String, HealthStatus)>>;
 
     /// Subscribe to node drain events
-    async fn subscribe_drain_events(&self) -> StoreResult<tokio::sync::broadcast::Receiver<String>>;
+    async fn subscribe_drain_events(&self)
+    -> StoreResult<tokio::sync::broadcast::Receiver<String>>;
 
     // =========================================================================
     // ACME Challenges
@@ -278,7 +289,6 @@ pub enum StoreConfig {
     /// Use a Valkey/Redis-backed distributed store.
     Valkey(Box<ValkeyConfig>),
 }
-
 
 /// Valkey/Redis configuration (Traefik redis provider compatible)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

@@ -1,7 +1,7 @@
+use parking_lot::RwLock;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use parking_lot::RwLock;
 
 /// Passive health checker that monitors response codes and latencies
 /// to detect unhealthy backends without active probing
@@ -131,10 +131,7 @@ impl PassiveHealthChecker {
     /// Returns true if the backend is currently considered healthy.
     pub fn is_healthy(&self, backend_url: &str) -> bool {
         let backends = self.backends.read();
-        backends
-            .get(backend_url)
-            .map(|s| s.healthy)
-            .unwrap_or(true)
+        backends.get(backend_url).map(|s| s.healthy).unwrap_or(true)
     }
 
     /// Returns true if the backend is healthy or its recovery interval has elapsed.
@@ -240,9 +237,10 @@ impl PassiveHealthChecker {
 
         // Check response time threshold
         if let Some(threshold_ms) = self.config.response_time_threshold_ms
-            && response_time.as_millis() as u64 > threshold_ms {
-                return true;
-            }
+            && response_time.as_millis() as u64 > threshold_ms
+        {
+            return true;
+        }
 
         false
     }

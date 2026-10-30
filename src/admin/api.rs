@@ -1,6 +1,6 @@
 use bytes::Bytes;
-use http_body_util::{combinators::BoxBody, BodyExt, Full};
-use hyper::{body::Incoming, Request, Response, StatusCode};
+use http_body_util::{BodyExt, Full, combinators::BoxBody};
+use hyper::{Request, Response, StatusCode, body::Incoming};
 use serde::Serialize;
 use std::sync::Arc;
 use tracing::info;
@@ -22,11 +22,7 @@ pub struct AdminApi {
 
 impl AdminApi {
     /// Create a new admin API with access to config, router, and service state.
-    pub fn new(
-        config: Arc<Config>,
-        router: Arc<Router>,
-        services: Arc<ServiceManager>,
-    ) -> Self {
+    pub fn new(config: Arc<Config>, router: Arc<Router>, services: Arc<ServiceManager>) -> Self {
         Self {
             config,
             _router: router,
@@ -49,20 +45,13 @@ impl AdminApi {
     }
 
     /// Handle admin API request
-    pub async fn handle(
-        &self,
-        req: Request<Incoming>,
-    ) -> Response<BoxBody<Bytes, hyper::Error>> {
+    pub async fn handle(&self, req: Request<Incoming>) -> Response<BoxBody<Bytes, hyper::Error>> {
         let path = req.uri().path();
         let method = req.method();
 
         // Authentication. /ping stays open for load balancer health probes.
         if path != "/ping" {
-            let configured_token = self
-                .config
-                .api
-                .as_ref()
-                .and_then(|a| a.token.as_deref());
+            let configured_token = self.config.api.as_ref().and_then(|a| a.token.as_deref());
 
             match configured_token {
                 Some(token) => {
@@ -114,7 +103,9 @@ impl AdminApi {
                     self.node_detail(node_id).await
                 }
             }
-            ("POST", path) if path.starts_with("/api/cluster/nodes/") && path.ends_with("/drain") => {
+            ("POST", path)
+                if path.starts_with("/api/cluster/nodes/") && path.ends_with("/drain") =>
+            {
                 let node_id = path
                     .trim_start_matches("/api/cluster/nodes/")
                     .trim_end_matches("/drain");
@@ -304,7 +295,10 @@ impl AdminApi {
             let detail = ServiceDetail {
                 name: name.to_string(),
                 servers,
-                load_balancer: service.load_balancer.as_ref().map(|_| "roundRobin".to_string()),
+                load_balancer: service
+                    .load_balancer
+                    .as_ref()
+                    .map(|_| "roundRobin".to_string()),
                 status: "enabled".to_string(),
             };
             self.json_response(&detail)
@@ -416,10 +410,7 @@ impl AdminApi {
                 ),
             }
         } else {
-            self.error_response(
-                StatusCode::BAD_REQUEST,
-                "Cluster mode not enabled",
-            )
+            self.error_response(StatusCode::BAD_REQUEST, "Cluster mode not enabled")
         }
     }
 
@@ -443,7 +434,11 @@ impl AdminApi {
 
             // For remote nodes, we update their status in the store
             // The node will pick this up and start draining
-            match cluster.store().node_set_status(node_id, crate::store::NodeStatus::Draining).await {
+            match cluster
+                .store()
+                .node_set_status(node_id, crate::store::NodeStatus::Draining)
+                .await
+            {
                 Ok(()) => {
                     info!("Initiated drain for node {} via API", node_id);
                     #[derive(Serialize)]
@@ -464,10 +459,7 @@ impl AdminApi {
                 ),
             }
         } else {
-            self.error_response(
-                StatusCode::BAD_REQUEST,
-                "Cluster mode not enabled",
-            )
+            self.error_response(StatusCode::BAD_REQUEST, "Cluster mode not enabled")
         }
     }
 
@@ -632,7 +624,11 @@ impl AdminApi {
             .unwrap()
     }
 
-    fn error_response(&self, status: StatusCode, message: &str) -> Response<BoxBody<Bytes, hyper::Error>> {
+    fn error_response(
+        &self,
+        status: StatusCode,
+        message: &str,
+    ) -> Response<BoxBody<Bytes, hyper::Error>> {
         #[derive(Serialize)]
         struct ErrorResponse<'a> {
             error: &'a str,

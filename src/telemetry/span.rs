@@ -219,8 +219,7 @@ mod tests {
     #[test]
     fn test_client_span() {
         let parent = TraceContext::default();
-        let span = RequestSpan::client(&parent, "upstream_request")
-            .with_service("backend-api");
+        let span = RequestSpan::client(&parent, "upstream_request").with_service("backend-api");
 
         assert_eq!(span.kind, SpanKind::Client);
         assert_eq!(span.context.trace_id, parent.trace_id);

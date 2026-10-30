@@ -13,7 +13,7 @@ pub mod watcher;
 pub use duration::Duration;
 pub use types::*;
 /// Re-exported config watcher types.
-pub use watcher::{watch_config_async, ConfigWatcher};
+pub use watcher::{ConfigWatcher, watch_config_async};
 
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -25,8 +25,8 @@ impl Config {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {:?}", path))?;
 
-        let mut config: Config = serde_norway::from_str(&content)
-            .with_context(|| "Failed to parse config file")?;
+        let mut config: Config =
+            serde_norway::from_str(&content).with_context(|| "Failed to parse config file")?;
 
         config.validate()?;
         config.pre_parse_uris();
@@ -42,9 +42,11 @@ impl Config {
                     for server in &mut lb.servers {
                         server.url_arc = Some(Arc::from(server.url.as_str()));
                         if let Ok(uri) = server.url.parse::<hyper::Uri>()
-                            && let (Some(scheme), Some(authority)) = (uri.scheme().cloned(), uri.authority().cloned()) {
-                                server.parsed_uri = Some(ParsedBackendUri { scheme, authority });
-                            }
+                            && let (Some(scheme), Some(authority)) =
+                                (uri.scheme().cloned(), uri.authority().cloned())
+                        {
+                            server.parsed_uri = Some(ParsedBackendUri { scheme, authority });
+                        }
                     }
                 }
             }
@@ -113,7 +115,10 @@ impl Config {
 
     /// Check if this config has any TCP routers
     pub fn has_tcp(&self) -> bool {
-        self.tcp.as_ref().map(|t| !t.routers.is_empty()).unwrap_or(false)
+        self.tcp
+            .as_ref()
+            .map(|t| !t.routers.is_empty())
+            .unwrap_or(false)
     }
 
     /// Get UDP routers
@@ -148,7 +153,10 @@ impl Config {
 
     /// Check if this config has any UDP routers
     pub fn has_udp(&self) -> bool {
-        self.udp.as_ref().map(|u| !u.routers.is_empty()).unwrap_or(false)
+        self.udp
+            .as_ref()
+            .map(|u| !u.routers.is_empty())
+            .unwrap_or(false)
     }
 
     /// Validate all config references (routers -> services -> middlewares -> entrypoints).
@@ -171,14 +179,20 @@ impl Config {
                 }
             } else if let Some(w) = &service.weighted {
                 if w.services.is_empty() {
-                    anyhow::bail!("Weighted service '{}' must reference at least one service", name);
+                    anyhow::bail!(
+                        "Weighted service '{}' must reference at least one service",
+                        name
+                    );
                 }
             } else if let Some(m) = &service.mirroring {
                 if m.service.is_empty() {
                     anyhow::bail!("Mirroring service '{}' must have a main service", name);
                 }
             } else {
-                anyhow::bail!("Service '{}' must have loadBalancer, weighted, or mirroring configured", name);
+                anyhow::bail!(
+                    "Service '{}' must have loadBalancer, weighted, or mirroring configured",
+                    name
+                );
             }
         }
 
@@ -196,7 +210,9 @@ impl Config {
             for mw_name in &router.middlewares {
                 // Handle middleware references with @provider suffix (e.g., "auth@file")
                 let mw_name_clean = mw_name.split('@').next().unwrap_or(mw_name);
-                if !self.middlewares().contains_key(mw_name_clean) && !self.middlewares().contains_key(mw_name) {
+                if !self.middlewares().contains_key(mw_name_clean)
+                    && !self.middlewares().contains_key(mw_name)
+                {
                     anyhow::bail!(
                         "Router '{}' references non-existent middleware '{}'",
                         name,
@@ -225,10 +241,16 @@ impl Config {
                 }
             } else if let Some(w) = &service.weighted {
                 if w.services.is_empty() {
-                    anyhow::bail!("TCP weighted service '{}' must reference at least one service", name);
+                    anyhow::bail!(
+                        "TCP weighted service '{}' must reference at least one service",
+                        name
+                    );
                 }
             } else {
-                anyhow::bail!("TCP service '{}' must have loadBalancer or weighted configured", name);
+                anyhow::bail!(
+                    "TCP service '{}' must have loadBalancer or weighted configured",
+                    name
+                );
             }
         }
 
@@ -245,7 +267,9 @@ impl Config {
             // Validate TCP middleware references
             for mw_name in &router.middlewares {
                 let mw_name_clean = mw_name.split('@').next().unwrap_or(mw_name);
-                if !self.tcp_middlewares().contains_key(mw_name_clean) && !self.tcp_middlewares().contains_key(mw_name) {
+                if !self.tcp_middlewares().contains_key(mw_name_clean)
+                    && !self.tcp_middlewares().contains_key(mw_name)
+                {
                     anyhow::bail!(
                         "TCP router '{}' references non-existent middleware '{}'",
                         name,
@@ -274,10 +298,16 @@ impl Config {
                 }
             } else if let Some(w) = &service.weighted {
                 if w.services.is_empty() {
-                    anyhow::bail!("UDP weighted service '{}' must reference at least one service", name);
+                    anyhow::bail!(
+                        "UDP weighted service '{}' must reference at least one service",
+                        name
+                    );
                 }
             } else {
-                anyhow::bail!("UDP service '{}' must have loadBalancer or weighted configured", name);
+                anyhow::bail!(
+                    "UDP service '{}' must have loadBalancer or weighted configured",
+                    name
+                );
             }
         }
 
@@ -294,7 +324,9 @@ impl Config {
             // Validate UDP middleware references
             for mw_name in &router.middlewares {
                 let mw_name_clean = mw_name.split('@').next().unwrap_or(mw_name);
-                if !self.udp_middlewares().contains_key(mw_name_clean) && !self.udp_middlewares().contains_key(mw_name) {
+                if !self.udp_middlewares().contains_key(mw_name_clean)
+                    && !self.udp_middlewares().contains_key(mw_name)
+                {
                     anyhow::bail!(
                         "UDP router '{}' references non-existent middleware '{}'",
                         name,

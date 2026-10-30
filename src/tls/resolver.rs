@@ -76,12 +76,9 @@ impl CertificateResolver {
     }
 
     /// Load a certificate from PEM files
-    pub fn load_certificate_files(
-        cert_path: &str,
-        key_path: &str,
-    ) -> Result<Arc<CertifiedKey>> {
-        use rustls::pki_types::pem::PemObject;
+    pub fn load_certificate_files(cert_path: &str, key_path: &str) -> Result<Arc<CertifiedKey>> {
         use rustls::pki_types::PrivateKeyDer;
+        use rustls::pki_types::pem::PemObject;
         use std::fs::File;
         use std::io::BufReader;
 
@@ -130,7 +127,10 @@ impl CertificateResolver {
                     info!("Loaded ACME certificate for {:?}", stored.domains);
                 }
                 Err(e) => {
-                    warn!("Failed to load ACME certificate for {}: {}", stored.domain, e);
+                    warn!(
+                        "Failed to load ACME certificate for {}: {}",
+                        stored.domain, e
+                    );
                 }
             }
         }
@@ -198,21 +198,22 @@ impl CertificateResolver {
         // 5. Try to load from ACME storage (in case cache is stale)
         if let Some(ref storage) = self.acme_storage
             && let Some(stored) = storage.get_certificate(domain)
-                && !stored.is_expired() {
-                    match Self::load_stored_certificate(&stored) {
-                        Ok(cert) => {
-                            // Update cache
-                            let mut cache = self.acme_cache.write();
-                            for d in &stored.domains {
-                                cache.insert(d.clone(), Arc::clone(&cert));
-                            }
-                            return Some(cert);
-                        }
-                        Err(e) => {
-                            error!("Failed to load certificate for {}: {}", domain, e);
-                        }
+            && !stored.is_expired()
+        {
+            match Self::load_stored_certificate(&stored) {
+                Ok(cert) => {
+                    // Update cache
+                    let mut cache = self.acme_cache.write();
+                    for d in &stored.domains {
+                        cache.insert(d.clone(), Arc::clone(&cert));
                     }
+                    return Some(cert);
                 }
+                Err(e) => {
+                    error!("Failed to load certificate for {}: {}", domain, e);
+                }
+            }
+        }
 
         // 6. Return default
         self.default_cert.clone()
@@ -253,7 +254,10 @@ impl ResolvesServerCert for CertificateResolver {
 impl std::fmt::Debug for CertificateResolver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CertificateResolver")
-            .field("static_domains", &self.static_certs.keys().collect::<Vec<_>>())
+            .field(
+                "static_domains",
+                &self.static_certs.keys().collect::<Vec<_>>(),
+            )
             .field("has_acme", &self.acme_storage.is_some())
             .field("has_default", &self.default_cert.is_some())
             .finish()
@@ -304,6 +308,10 @@ mod tests {
 
         // We can't easily create a real CertifiedKey in tests without actual cert data
         // So we just test the logic conceptually
-        assert!(resolver.find_wildcard_match("foo.example.com", &certs).is_none());
+        assert!(
+            resolver
+                .find_wildcard_match("foo.example.com", &certs)
+                .is_none()
+        );
     }
 }

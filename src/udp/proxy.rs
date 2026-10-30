@@ -3,8 +3,8 @@ use dashmap::DashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -86,7 +86,9 @@ impl UdpProxy {
         mut shutdown: mpsc::Receiver<()>,
     ) {
         let entrypoint = entrypoint.to_string();
-        let local_addr = socket.local_addr().unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap());
+        let local_addr = socket
+            .local_addr()
+            .unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap());
 
         info!(
             "UDP proxy started on {} (entrypoint: {})",
@@ -180,13 +182,8 @@ impl UdpProxy {
             let backend_addr = session.backend_addr;
             drop(session); // Release lock
 
-            self.forward_to_backend(
-                client_addr,
-                &backend_socket,
-                backend_addr,
-                &data,
-            )
-            .await?;
+            self.forward_to_backend(client_addr, &backend_socket, backend_addr, &data)
+                .await?;
 
             return Ok(());
         }
@@ -249,13 +246,8 @@ impl UdpProxy {
         self.sessions.insert(client_addr, session);
 
         // Forward the datagram and start listening for response
-        self.forward_to_backend(
-            client_addr,
-            &backend_socket,
-            backend_addr,
-            &data,
-        )
-        .await?;
+        self.forward_to_backend(client_addr, &backend_socket, backend_addr, &data)
+            .await?;
 
         // Spawn task to listen for backend responses
         let proxy_metrics = self.clone_metrics();
@@ -287,7 +279,8 @@ impl UdpProxy {
         // Send to backend
         backend_socket.send_to(data, backend_addr).await?;
         self.packets_sent.fetch_add(1, Ordering::Relaxed);
-        self.bytes_sent.fetch_add(data.len() as u64, Ordering::Relaxed);
+        self.bytes_sent
+            .fetch_add(data.len() as u64, Ordering::Relaxed);
 
         debug!(
             "UDP: Forwarded {} bytes from {} to {}",
@@ -321,21 +314,23 @@ impl UdpProxy {
         loop {
             // Check if session still exists
             if !sessions.contains_key(&client_addr) {
-                debug!("UDP: Session for {} no longer exists, stopping listener", client_addr);
+                debug!(
+                    "UDP: Session for {} no longer exists, stopping listener",
+                    client_addr
+                );
                 break;
             }
 
             // Wait for response with timeout
-            let result = tokio::time::timeout(
-                session_timeout,
-                backend_socket.recv_from(&mut buf),
-            )
-            .await;
+            let result =
+                tokio::time::timeout(session_timeout, backend_socket.recv_from(&mut buf)).await;
 
             match result {
                 Ok(Ok((len, from_addr))) => {
                     proxy.packets_received.fetch_add(1, Ordering::Relaxed);
-                    proxy.bytes_received.fetch_add(len as u64, Ordering::Relaxed);
+                    proxy
+                        .bytes_received
+                        .fetch_add(len as u64, Ordering::Relaxed);
 
                     // Update session activity
                     if let Some(mut session) = sessions.get_mut(&client_addr) {
@@ -359,7 +354,10 @@ impl UdpProxy {
                     }
                 }
                 Ok(Err(e)) => {
-                    debug!("UDP: Error receiving from backend for {}: {}", client_addr, e);
+                    debug!(
+                        "UDP: Error receiving from backend for {}: {}",
+                        client_addr, e
+                    );
                     break;
                 }
                 Err(_) => {
@@ -376,10 +374,7 @@ impl UdpProxy {
     }
 
     /// Clean up expired sessions
-    fn cleanup_expired_sessions(
-        sessions: &DashMap<SocketAddr, UdpSession>,
-        timeout: Duration,
-    ) {
+    fn cleanup_expired_sessions(sessions: &DashMap<SocketAddr, UdpSession>, timeout: Duration) {
         let now = Instant::now();
         let mut expired = Vec::new();
 

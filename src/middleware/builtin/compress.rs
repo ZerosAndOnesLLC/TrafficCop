@@ -1,8 +1,8 @@
 use crate::config::CompressConfig;
-use flate2::write::GzEncoder;
 use flate2::Compression;
-use hyper::header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE};
+use flate2::write::GzEncoder;
 use hyper::HeaderMap;
+use hyper::header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE};
 use std::io::Write;
 
 /// Compression middleware for response body compression
@@ -42,10 +42,18 @@ impl CompressMiddleware {
 
         // Case-insensitive check without allocation
         // Prefer brotli over gzip
-        if accept.as_bytes().windows(2).any(|w| w.eq_ignore_ascii_case(b"br")) {
+        if accept
+            .as_bytes()
+            .windows(2)
+            .any(|w| w.eq_ignore_ascii_case(b"br"))
+        {
             return CompressionAlgorithm::Brotli;
         }
-        if accept.as_bytes().windows(4).any(|w| w.eq_ignore_ascii_case(b"gzip")) {
+        if accept
+            .as_bytes()
+            .windows(4)
+            .any(|w| w.eq_ignore_ascii_case(b"gzip"))
+        {
             return CompressionAlgorithm::Gzip;
         }
 
@@ -118,7 +126,10 @@ impl CompressMiddleware {
     }
 
     /// Compress data with the specified algorithm (non-blocking)
-    pub async fn compress(data: Vec<u8>, algorithm: CompressionAlgorithm) -> Result<Vec<u8>, std::io::Error> {
+    pub async fn compress(
+        data: Vec<u8>,
+        algorithm: CompressionAlgorithm,
+    ) -> Result<Vec<u8>, std::io::Error> {
         match algorithm {
             CompressionAlgorithm::Gzip => Self::compress_gzip(data).await,
             CompressionAlgorithm::Brotli => Self::compress_brotli(data).await,

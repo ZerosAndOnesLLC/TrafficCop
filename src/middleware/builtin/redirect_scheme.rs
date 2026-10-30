@@ -1,5 +1,5 @@
 use crate::config::RedirectSchemeConfig;
-use hyper::header::{HeaderValue, HOST, LOCATION};
+use hyper::header::{HOST, HeaderValue, LOCATION};
 use hyper::{Request, Response, StatusCode};
 
 /// Middleware for redirecting between HTTP and HTTPS schemes

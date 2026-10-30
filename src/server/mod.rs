@@ -8,7 +8,7 @@ pub use listener::Listener;
 /// UDP listener for UDP-based entrypoints.
 pub use udp_listener::UdpListener;
 
-use crate::config::{watch_config_async, Config};
+use crate::config::{Config, watch_config_async};
 use crate::health::{PassiveHealthChecker, PassiveHealthConfig};
 use crate::middleware::{AccessLogWriter, MiddlewareRegistry};
 use crate::proxy::ProxyHandler;
@@ -20,11 +20,11 @@ use anyhow::Result;
 use arc_swap::ArcSwap;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::signal;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tracing::{error, info, warn};
 
 /// Tracks active connections for graceful shutdown
@@ -156,7 +156,9 @@ impl SharedState {
         Self {
             router: ArcSwap::from_pointee(Router::from_config(config)),
             services: ArcSwap::from_pointee(ServiceManager::new(config)),
-            middlewares: ArcSwap::from_pointee(MiddlewareRegistry::from_config(config.middlewares())),
+            middlewares: ArcSwap::from_pointee(MiddlewareRegistry::from_config(
+                config.middlewares(),
+            )),
             passive_health: Arc::new(PassiveHealthChecker::new(PassiveHealthConfig::default())),
             connections: ConnectionTracker::new(),
             acme_challenges: Arc::new(RwLock::new(HashMap::new())),
@@ -170,7 +172,9 @@ impl SharedState {
         Self {
             router: ArcSwap::from_pointee(Router::from_config(config)),
             services: ArcSwap::from_pointee(ServiceManager::new(config)),
-            middlewares: ArcSwap::from_pointee(MiddlewareRegistry::from_config(config.middlewares())),
+            middlewares: ArcSwap::from_pointee(MiddlewareRegistry::from_config(
+                config.middlewares(),
+            )),
             passive_health: Arc::new(PassiveHealthChecker::new(PassiveHealthConfig::default())),
             connections: ConnectionTracker::new(),
             acme_challenges: acme_manager.get_pending_challenges(),
@@ -225,11 +229,7 @@ impl Server {
     }
 
     /// Create server with ACME support
-    pub fn with_acme(
-        config: Config,
-        config_path: PathBuf,
-        acme_manager: Arc<AcmeManager>,
-    ) -> Self {
+    pub fn with_acme(config: Config, config_path: PathBuf, acme_manager: Arc<AcmeManager>) -> Self {
         let state = Arc::new(SharedState::with_acme(&config, &acme_manager));
         let config = Arc::new(ArcSwap::from_pointee(config));
         let proxy = Arc::new(ProxyHandler::new());

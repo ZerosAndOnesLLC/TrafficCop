@@ -1,7 +1,7 @@
 use crate::config::ClusterConfig;
 use crate::store::{NodeInfo, NodeStatus, Store};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -19,10 +19,7 @@ pub struct ClusterManager {
 
 impl ClusterManager {
     /// Create a new cluster manager
-    pub async fn new(
-        config: ClusterConfig,
-        store: Arc<dyn Store>,
-    ) -> anyhow::Result<Arc<Self>> {
+    pub async fn new(config: ClusterConfig, store: Arc<dyn Store>) -> anyhow::Result<Arc<Self>> {
         // Generate or use provided node ID
         let node_id = config.node_id.clone().unwrap_or_else(|| {
             let hostname = hostname::get()
@@ -34,9 +31,12 @@ impl ClusterManager {
 
         // Get advertise address
         let advertise_address = config.advertise_address.clone().unwrap_or_else(|| {
-            format!("{}:8080", hostname::get()
-                .map(|h| h.to_string_lossy().to_string())
-                .unwrap_or_else(|_| "127.0.0.1".to_string()))
+            format!(
+                "{}:8080",
+                hostname::get()
+                    .map(|h| h.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| "127.0.0.1".to_string())
+            )
         });
 
         let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
@@ -267,10 +267,7 @@ impl ClusterManager {
         // Filter out stale nodes
         Ok(nodes
             .into_iter()
-            .filter(|n| {
-                n.status != NodeStatus::Unhealthy
-                    && (now - n.last_heartbeat) < timeout_ms
-            })
+            .filter(|n| n.status != NodeStatus::Unhealthy && (now - n.last_heartbeat) < timeout_ms)
             .collect())
     }
 
@@ -279,8 +276,14 @@ impl ClusterManager {
         let nodes = self.get_active_nodes().await.unwrap_or_default();
 
         let total_connections: u64 = nodes.iter().map(|n| n.active_connections).sum();
-        let active_count = nodes.iter().filter(|n| n.status == NodeStatus::Active).count();
-        let draining_count = nodes.iter().filter(|n| n.status == NodeStatus::Draining).count();
+        let active_count = nodes
+            .iter()
+            .filter(|n| n.status == NodeStatus::Active)
+            .count();
+        let draining_count = nodes
+            .iter()
+            .filter(|n| n.status == NodeStatus::Draining)
+            .count();
 
         ClusterStats {
             node_count: nodes.len(),

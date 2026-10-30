@@ -1,7 +1,4 @@
-use super::{
-    HealthStatus, NodeInfo, NodeStatus, Store, StoreError, StoreResult,
-    ValkeyConfig,
-};
+use super::{HealthStatus, NodeInfo, NodeStatus, Store, StoreError, StoreResult, ValkeyConfig};
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use redis::aio::ConnectionManager;
@@ -170,14 +167,8 @@ impl ValkeyStore {
 
         let handle = tokio::spawn(async move {
             loop {
-                match Self::run_pubsub_loop(
-                    &client,
-                    &key_prefix,
-                    &config_tx,
-                    &health_tx,
-                    &drain_tx,
-                )
-                .await
+                match Self::run_pubsub_loop(&client, &key_prefix, &config_tx, &health_tx, &drain_tx)
+                    .await
                 {
                     Ok(()) => {
                         debug!("Pub/sub loop ended normally");
@@ -251,13 +242,10 @@ impl ValkeyStore {
                 // Parse health change: "service:server_url:json"
                 if let Some((service, rest)) = payload.split_once(':')
                     && let Some((server_url, json)) = rest.split_once(':')
-                        && let Ok(status) = serde_json::from_str::<HealthStatus>(json) {
-                            let _ = health_tx.send((
-                                service.to_string(),
-                                server_url.to_string(),
-                                status,
-                            ));
-                        }
+                    && let Ok(status) = serde_json::from_str::<HealthStatus>(json)
+                {
+                    let _ = health_tx.send((service.to_string(), server_url.to_string(), status));
+                }
             } else if channel == drain_channel {
                 debug!("Drain event received for node: {}", payload);
                 let _ = drain_tx.send(payload);
@@ -423,8 +411,8 @@ impl Store for ValkeyStore {
         status: &HealthStatus,
     ) -> StoreResult<()> {
         let key = self.key(&["health", service, server_url]);
-        let json = serde_json::to_string(status)
-            .map_err(|e| StoreError::Serialization(e.to_string()))?;
+        let json =
+            serde_json::to_string(status).map_err(|e| StoreError::Serialization(e.to_string()))?;
 
         // Set with 5 minute TTL (health checks should refresh)
         self.conn

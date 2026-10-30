@@ -82,10 +82,10 @@ mod tests {
     #[test]
     fn test_buffering_limits() {
         let config = BufferingConfig {
-            max_request_body_bytes: 1024 * 1024, // 1MB
-            mem_request_body_bytes: 64 * 1024,   // 64KB
+            max_request_body_bytes: 1024 * 1024,       // 1MB
+            mem_request_body_bytes: 64 * 1024,         // 64KB
             max_response_body_bytes: 10 * 1024 * 1024, // 10MB
-            mem_response_body_bytes: 1024 * 1024, // 1MB
+            mem_response_body_bytes: 1024 * 1024,      // 1MB
             retry_expression: Some("IsNetworkError()".to_string()),
         };
 

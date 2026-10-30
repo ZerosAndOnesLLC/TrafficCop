@@ -1,9 +1,9 @@
 //! gRPC and gRPC-Web request handling utilities.
 
 use bytes::Bytes;
-use http_body_util::{combinators::BoxBody, BodyExt, Full};
-use hyper::header::{HeaderName, HeaderValue, CONTENT_TYPE};
-use hyper::{body::Incoming, Request, Response, StatusCode};
+use http_body_util::{BodyExt, Full, combinators::BoxBody};
+use hyper::header::{CONTENT_TYPE, HeaderName, HeaderValue};
+use hyper::{Request, Response, StatusCode, body::Incoming};
 use tracing::debug;
 
 /// gRPC content type prefix
@@ -177,8 +177,10 @@ fn percent_encode(s: &str) -> String {
 pub fn prepare_grpc_request<B>(req: &mut Request<B>) {
     // Ensure TE: trailers is set (required for gRPC over HTTP/2)
     if !req.headers().contains_key("te") {
-        req.headers_mut()
-            .insert(HeaderName::from_static("te"), HeaderValue::from_static("trailers"));
+        req.headers_mut().insert(
+            HeaderName::from_static("te"),
+            HeaderValue::from_static("trailers"),
+        );
     }
 }
 
@@ -189,18 +191,20 @@ pub fn copy_grpc_trailers(
     grpc_message: Option<&str>,
 ) {
     if let Some(status) = grpc_status
-        && let Ok(val) = HeaderValue::from_str(status) {
-            response
-                .headers_mut()
-                .insert(HeaderName::from_static("grpc-status"), val);
-        }
+        && let Ok(val) = HeaderValue::from_str(status)
+    {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static("grpc-status"), val);
+    }
 
     if let Some(message) = grpc_message
-        && let Ok(val) = HeaderValue::from_str(message) {
-            response
-                .headers_mut()
-                .insert(HeaderName::from_static("grpc-message"), val);
-        }
+        && let Ok(val) = HeaderValue::from_str(message)
+    {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static("grpc-message"), val);
+    }
 }
 
 #[inline]

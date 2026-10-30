@@ -1,5 +1,5 @@
 use crate::config::ForwardAuthConfig;
-use hyper::header::{HeaderMap, HeaderName, AUTHORIZATION, COOKIE};
+use hyper::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderName};
 use hyper::{Method, Request, StatusCode};
 use regex::Regex;
 use reqwest::Client;
@@ -73,39 +73,41 @@ impl ForwardAuthMiddleware {
         req: &Request<B>,
     ) -> Result<AuthResult, (StatusCode, String)> {
         // Build the auth request
-        let mut auth_req = self
-            .client
-            .request(Method::GET, &self.address);
+        let mut auth_req = self.client.request(Method::GET, &self.address);
 
         // Forward specific headers
         let original_headers = req.headers();
 
         // Always forward these headers if present
         if let Some(auth) = original_headers.get(AUTHORIZATION)
-            && let Ok(v) = auth.to_str() {
-                auth_req = auth_req.header(AUTHORIZATION.as_str(), v);
-            }
+            && let Ok(v) = auth.to_str()
+        {
+            auth_req = auth_req.header(AUTHORIZATION.as_str(), v);
+        }
 
         if let Some(cookie) = original_headers.get(COOKIE)
-            && let Ok(v) = cookie.to_str() {
-                auth_req = auth_req.header(COOKIE.as_str(), v);
-            }
+            && let Ok(v) = cookie.to_str()
+        {
+            auth_req = auth_req.header(COOKIE.as_str(), v);
+        }
 
         // Forward configured request headers
         for header_name in &self.auth_request_headers {
             if let Some(value) = original_headers.get(header_name)
-                && let Ok(v) = value.to_str() {
-                    auth_req = auth_req.header(header_name.as_str(), v);
-                }
+                && let Ok(v) = value.to_str()
+            {
+                auth_req = auth_req.header(header_name.as_str(), v);
+            }
         }
 
         // Forward X-Forwarded-* headers if trusted
         if self.trust_forward_header {
             for (name, value) in original_headers.iter() {
                 if name.as_str().starts_with("x-forwarded-")
-                    && let Ok(v) = value.to_str() {
-                        auth_req = auth_req.header(name.as_str(), v);
-                    }
+                    && let Ok(v) = value.to_str()
+                {
+                    auth_req = auth_req.header(name.as_str(), v);
+                }
             }
         }
 
@@ -115,16 +117,20 @@ impl ForwardAuthMiddleware {
             .header("X-Forwarded-Uri", req.uri().to_string());
 
         if let Some(host) = original_headers.get("host")
-            && let Ok(v) = host.to_str() {
-                auth_req = auth_req.header("X-Forwarded-Host", v);
-            }
+            && let Ok(v) = host.to_str()
+        {
+            auth_req = auth_req.header("X-Forwarded-Host", v);
+        }
 
         // Send the request
         let response = match auth_req.send().await {
             Ok(r) => r,
             Err(e) => {
                 warn!("Forward auth request failed: {}", e);
-                return Err((StatusCode::INTERNAL_SERVER_ERROR, "Auth service unavailable".to_string()));
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Auth service unavailable".to_string(),
+                ));
             }
         };
 
@@ -156,12 +162,16 @@ impl ForwardAuthMiddleware {
             for cookie_name in &self.add_auth_cookies_to_response {
                 if let Some(set_cookie) = response_headers.get("set-cookie")
                     && let Ok(v) = set_cookie.to_str()
-                        && v.starts_with(cookie_name) {
-                            cookies_to_add.push(v.to_string());
-                        }
+                    && v.starts_with(cookie_name)
+                {
+                    cookies_to_add.push(v.to_string());
+                }
             }
 
-            debug!("Forward auth succeeded, forwarding {} headers", forward_headers.len());
+            debug!(
+                "Forward auth succeeded, forwarding {} headers",
+                forward_headers.len()
+            );
 
             Ok(AuthResult {
                 headers_to_request: forward_headers,

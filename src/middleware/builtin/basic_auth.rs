@@ -1,5 +1,5 @@
 use crate::config::BasicAuthConfig;
-use hyper::header::{HeaderValue, AUTHORIZATION, WWW_AUTHENTICATE};
+use hyper::header::{AUTHORIZATION, HeaderValue, WWW_AUTHENTICATE};
 use hyper::{Request, Response, StatusCode};
 use std::collections::HashMap;
 
@@ -193,7 +193,8 @@ fn md5_apr1_encode(password: &[u8], salt: &[u8]) -> String {
     }
 
     fn push_group(out: &mut String, mut v: u32, n: usize) {
-        const CRYPT64: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+        const CRYPT64: &[u8; 64] =
+            b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
         for _ in 0..n {
             out.push(CRYPT64[(v & 0x3f) as usize] as char);
             v >>= 6;
@@ -201,7 +202,13 @@ fn md5_apr1_encode(password: &[u8], salt: &[u8]) -> String {
     }
 
     let mut out = String::with_capacity(22);
-    for &(a, b, c) in &[(0usize, 6usize, 12usize), (1, 7, 13), (2, 8, 14), (3, 9, 15), (4, 10, 5)] {
+    for &(a, b, c) in &[
+        (0usize, 6usize, 12usize),
+        (1, 7, 13),
+        (2, 8, 14),
+        (3, 9, 15),
+        (4, 10, 5),
+    ] {
         let v = ((fin[a] as u32) << 16) | ((fin[b] as u32) << 8) | fin[c] as u32;
         push_group(&mut out, v, 4);
     }
@@ -262,10 +269,7 @@ mod tests {
 
     fn test_config() -> BasicAuthConfig {
         BasicAuthConfig {
-            users: vec![
-                "admin:secret123".to_string(),
-                "user:password".to_string(),
-            ],
+            users: vec!["admin:secret123".to_string(), "user:password".to_string()],
             users_file: None,
             realm: Some("Test Realm".to_string()),
             header_field: None,
@@ -392,6 +396,9 @@ mod tests {
         assert!(!verify_password("$apr1$", "password"));
         assert!(!verify_password("$apr1$short", "password"));
         assert!(!verify_password("$2y$05$tooshort", "password"));
-        assert!(!verify_password("$2z$05$nC6nErr9XZJuMJ57WyCob.EuZEjylDt2KaHfbfOtyb.EgL1I2jCVa", "password"));
+        assert!(!verify_password(
+            "$2z$05$nC6nErr9XZJuMJ57WyCob.EuZEjylDt2KaHfbfOtyb.EgL1I2jCVa",
+            "password"
+        ));
     }
 }

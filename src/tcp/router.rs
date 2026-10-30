@@ -57,10 +57,7 @@ impl TcpRule {
 
         // ClientIP rule
         if let Some(ips) = Self::extract_clientip(rule) {
-            let networks: Vec<IpNetwork> = ips
-                .iter()
-                .filter_map(|ip| ip.parse().ok())
-                .collect();
+            let networks: Vec<IpNetwork> = ips.iter().filter_map(|ip| ip.parse().ok()).collect();
             if !networks.is_empty() {
                 return TcpRule::ClientIP(networks);
             }
@@ -85,16 +82,15 @@ impl TcpRule {
             .filter(|s| !s.is_empty())
             .map(|s| {
                 // Remove backticks
-                s.trim_matches('`').trim_matches('\'').trim_matches('"').to_string()
+                s.trim_matches('`')
+                    .trim_matches('\'')
+                    .trim_matches('"')
+                    .to_string()
             })
             .filter(|s| !s.is_empty() && s != "*")
             .collect();
 
-        if hosts.is_empty() {
-            None
-        } else {
-            Some(hosts)
-        }
+        if hosts.is_empty() { None } else { Some(hosts) }
     }
 
     /// Extract IP ranges from ClientIP rule
@@ -109,14 +105,15 @@ impl TcpRule {
             .split(',')
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
-            .map(|s| s.trim_matches('`').trim_matches('\'').trim_matches('"').to_string())
+            .map(|s| {
+                s.trim_matches('`')
+                    .trim_matches('\'')
+                    .trim_matches('"')
+                    .to_string()
+            })
             .collect();
 
-        if ips.is_empty() {
-            None
-        } else {
-            Some(ips)
-        }
+        if ips.is_empty() { None } else { Some(ips) }
     }
 
     /// Check if a connection matches this rule

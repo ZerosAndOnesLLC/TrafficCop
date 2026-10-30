@@ -1,8 +1,8 @@
 use super::storage::{AcmeAccount, StorageManager, StoredCertificate};
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::rand::SystemRandom;
-use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_ASN1_SIGNING};
+use ring::signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair, KeyPair};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -110,9 +110,7 @@ pub struct AcmeClient {
 impl AcmeClient {
     /// Create a new ACME client
     pub fn new(storage: Arc<StorageManager>, email: &str, ca_server: Option<&str>) -> Self {
-        let directory_url = ca_server
-            .unwrap_or(LETS_ENCRYPT_PRODUCTION)
-            .to_string();
+        let directory_url = ca_server.unwrap_or(LETS_ENCRYPT_PRODUCTION).to_string();
 
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
@@ -179,8 +177,12 @@ impl AcmeClient {
             _ => return Err(anyhow::anyhow!("Unsupported key format")),
         };
 
-        EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &key_bytes, &SystemRandom::new())
-            .map_err(|e| anyhow::anyhow!("Failed to load key pair: {:?}", e))
+        EcdsaKeyPair::from_pkcs8(
+            &ECDSA_P256_SHA256_ASN1_SIGNING,
+            &key_bytes,
+            &SystemRandom::new(),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to load key pair: {:?}", e))
     }
 
     /// Create a new ACME account
@@ -532,7 +534,11 @@ impl AcmeClient {
                     return Err(anyhow::anyhow!("Challenge failed"));
                 }
                 "pending" | "processing" => {
-                    debug!("Challenge status: {}, attempt {}/30", challenge.status, i + 1);
+                    debug!(
+                        "Challenge status: {}, attempt {}/30",
+                        challenge.status,
+                        i + 1
+                    );
                 }
                 _ => {
                     warn!("Unknown challenge status: {}", challenge.status);
@@ -615,9 +621,12 @@ impl AcmeClient {
 
         let cert_key_pem = pem_encode("PRIVATE KEY", cert_key_pkcs8.as_ref());
 
-        let cert_key =
-            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, cert_key_pkcs8.as_ref(), &rng)
-                .map_err(|e| anyhow::anyhow!("Failed to load cert key: {:?}", e))?;
+        let cert_key = EcdsaKeyPair::from_pkcs8(
+            &ECDSA_P256_SHA256_ASN1_SIGNING,
+            cert_key_pkcs8.as_ref(),
+            &rng,
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to load cert key: {:?}", e))?;
 
         // Build CSR
         let csr = build_csr(domains, &cert_key, &rng)?;
@@ -753,7 +762,9 @@ fn build_san_attribute(domains: &[String]) -> Vec<u8> {
     let exts_seq = wrap_sequence(&ext_seq);
 
     // extensionRequest OID: 1.2.840.113549.1.9.14
-    let ext_req_oid = vec![0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x0e];
+    let ext_req_oid = vec![
+        0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x0e,
+    ];
 
     let mut attr = ext_req_oid;
     let exts_set = wrap_set(&exts_seq);

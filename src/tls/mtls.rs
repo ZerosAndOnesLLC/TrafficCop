@@ -1,9 +1,9 @@
 use crate::config::{ClientAuth, TlsOptions};
 use anyhow::{Context, Result};
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::{ResolvesServerCert, WebPkiClientVerifier};
 use rustls::{RootCertStore, ServerConfig};
-use rustls::pki_types::pem::PemObject;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
@@ -30,9 +30,15 @@ impl std::str::FromStr for ClientAuthMode {
         Ok(match s.to_lowercase().as_str() {
             "noclientcert" | "no_client_cert" | "" => ClientAuthMode::NoClientCert,
             "requestclientcert" | "request_client_cert" => ClientAuthMode::RequestClientCert,
-            "requireanyclientcert" | "require_any_client_cert" => ClientAuthMode::RequireAnyClientCert,
-            "verifyclientcertifgiven" | "verify_client_cert_if_given" => ClientAuthMode::VerifyClientCertIfGiven,
-            "requireandverifyclientcert" | "require_and_verify_client_cert" => ClientAuthMode::RequireAndVerifyClientCert,
+            "requireanyclientcert" | "require_any_client_cert" => {
+                ClientAuthMode::RequireAnyClientCert
+            }
+            "verifyclientcertifgiven" | "verify_client_cert_if_given" => {
+                ClientAuthMode::VerifyClientCertIfGiven
+            }
+            "requireandverifyclientcert" | "require_and_verify_client_cert" => {
+                ClientAuthMode::RequireAndVerifyClientCert
+            }
             _ => ClientAuthMode::NoClientCert,
         })
     }
@@ -87,12 +93,10 @@ impl MtlsConfigBuilder {
         server_key: PrivateKeyDer<'static>,
     ) -> Result<ServerConfig> {
         let config = match self.client_auth_mode {
-            ClientAuthMode::NoClientCert => {
-                ServerConfig::builder()
-                    .with_no_client_auth()
-                    .with_single_cert(server_certs, server_key)
-                    .context("Failed to build TLS config")?
-            }
+            ClientAuthMode::NoClientCert => ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(server_certs, server_key)
+                .context("Failed to build TLS config")?,
             ClientAuthMode::RequestClientCert
             | ClientAuthMode::VerifyClientCertIfGiven
             | ClientAuthMode::RequireAnyClientCert
@@ -100,7 +104,8 @@ impl MtlsConfigBuilder {
                 // Build root cert store from CA certs
                 let mut root_store = RootCertStore::empty();
                 for cert in &self.ca_certs {
-                    root_store.add(cert.clone())
+                    root_store
+                        .add(cert.clone())
                         .context("Failed to add CA certificate to root store")?;
                 }
 
@@ -136,11 +141,9 @@ impl MtlsConfigBuilder {
         resolver: Arc<dyn ResolvesServerCert>,
     ) -> Result<ServerConfig> {
         let config = match self.client_auth_mode {
-            ClientAuthMode::NoClientCert => {
-                ServerConfig::builder()
-                    .with_no_client_auth()
-                    .with_cert_resolver(resolver)
-            }
+            ClientAuthMode::NoClientCert => ServerConfig::builder()
+                .with_no_client_auth()
+                .with_cert_resolver(resolver),
             ClientAuthMode::RequestClientCert
             | ClientAuthMode::VerifyClientCertIfGiven
             | ClientAuthMode::RequireAnyClientCert
@@ -148,7 +151,8 @@ impl MtlsConfigBuilder {
                 // Build root cert store from CA certs
                 let mut root_store = RootCertStore::empty();
                 for cert in &self.ca_certs {
-                    root_store.add(cert.clone())
+                    root_store
+                        .add(cert.clone())
                         .context("Failed to add CA certificate to root store")?;
                 }
 
@@ -159,11 +163,9 @@ impl MtlsConfigBuilder {
                             .build()
                             .context("Failed to build client verifier")?
                     }
-                    _ => {
-                        WebPkiClientVerifier::builder(Arc::new(root_store))
-                            .build()
-                            .context("Failed to build client verifier")?
-                    }
+                    _ => WebPkiClientVerifier::builder(Arc::new(root_store))
+                        .build()
+                        .context("Failed to build client verifier")?,
                 };
 
                 ServerConfig::builder()
@@ -189,8 +191,8 @@ impl Default for MtlsConfigBuilder {
 
 /// Load certificates from a PEM file
 fn load_certs(path: &str) -> Result<Vec<CertificateDer<'static>>> {
-    let file = File::open(path)
-        .with_context(|| format!("Failed to open certificate file: {}", path))?;
+    let file =
+        File::open(path).with_context(|| format!("Failed to open certificate file: {}", path))?;
     let mut reader = BufReader::new(file);
 
     let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_reader_iter(&mut reader)
@@ -253,7 +255,8 @@ impl ClientCertInfo {
 
         Some(format!(
             "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----",
-            encoded.chars()
+            encoded
+                .chars()
                 .collect::<Vec<_>>()
                 .chunks(64)
                 .map(|c| c.iter().collect::<String>())
@@ -300,12 +303,32 @@ mod tests {
 
     #[test]
     fn test_client_auth_mode_from_str() {
-        assert_eq!("".parse::<ClientAuthMode>().unwrap(), ClientAuthMode::NoClientCert);
-        assert_eq!("NoClientCert".parse::<ClientAuthMode>().unwrap(), ClientAuthMode::NoClientCert);
-        assert_eq!("RequestClientCert".parse::<ClientAuthMode>().unwrap(), ClientAuthMode::RequestClientCert);
-        assert_eq!("RequireAnyClientCert".parse::<ClientAuthMode>().unwrap(), ClientAuthMode::RequireAnyClientCert);
-        assert_eq!("VerifyClientCertIfGiven".parse::<ClientAuthMode>().unwrap(), ClientAuthMode::VerifyClientCertIfGiven);
-        assert_eq!("RequireAndVerifyClientCert".parse::<ClientAuthMode>().unwrap(), ClientAuthMode::RequireAndVerifyClientCert);
+        assert_eq!(
+            "".parse::<ClientAuthMode>().unwrap(),
+            ClientAuthMode::NoClientCert
+        );
+        assert_eq!(
+            "NoClientCert".parse::<ClientAuthMode>().unwrap(),
+            ClientAuthMode::NoClientCert
+        );
+        assert_eq!(
+            "RequestClientCert".parse::<ClientAuthMode>().unwrap(),
+            ClientAuthMode::RequestClientCert
+        );
+        assert_eq!(
+            "RequireAnyClientCert".parse::<ClientAuthMode>().unwrap(),
+            ClientAuthMode::RequireAnyClientCert
+        );
+        assert_eq!(
+            "VerifyClientCertIfGiven".parse::<ClientAuthMode>().unwrap(),
+            ClientAuthMode::VerifyClientCertIfGiven
+        );
+        assert_eq!(
+            "RequireAndVerifyClientCert"
+                .parse::<ClientAuthMode>()
+                .unwrap(),
+            ClientAuthMode::RequireAndVerifyClientCert
+        );
     }
 
     #[test]

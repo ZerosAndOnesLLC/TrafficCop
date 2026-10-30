@@ -281,7 +281,13 @@ mod tests {
         let entry = AccessLogBuilder::new(addr, "GET", "/api/test", "HTTP/1.1")
             .host(Some("example.com"))
             .user_agent(Some("test-agent"))
-            .finish(200, Some(1234), Some("api-route"), Some("api-service"), Some("http://backend:8080"));
+            .finish(
+                200,
+                Some(1234),
+                Some("api-route"),
+                Some("api-service"),
+                Some("http://backend:8080"),
+            );
 
         assert_eq!(entry.method, "GET");
         assert_eq!(entry.path, "/api/test");
