@@ -2,11 +2,11 @@ use super::HealthStatus;
 use crate::config::HealthCheck;
 use hyper::body::Bytes;
 use hyper::{Method, Request, StatusCode};
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::time::{interval, timeout};
 use tracing::{debug, warn};
@@ -36,11 +36,16 @@ impl HealthChecker {
         let check_url = format!(
             "{}://{}{}",
             scheme,
-            server_url.trim_start_matches("http://").trim_start_matches("https://").trim_end_matches('/'),
+            server_url
+                .trim_start_matches("http://")
+                .trim_start_matches("https://")
+                .trim_end_matches('/'),
             config.path
         );
         let check_uri: hyper::Uri = check_url.parse().unwrap_or_else(|_| {
-            format!("http://{}{}", server_url, config.path).parse().unwrap()
+            format!("http://{}{}", server_url, config.path)
+                .parse()
+                .unwrap()
         });
 
         let check_method = config
@@ -77,10 +82,7 @@ impl HealthChecker {
             match result {
                 Ok(Ok(())) => {
                     self.status.record_success();
-                    let successes = self
-                        .status
-                        .consecutive_successes
-                        .load(Ordering::Relaxed);
+                    let successes = self.status.consecutive_successes.load(Ordering::Relaxed);
 
                     if !self.status.is_healthy() && successes >= healthy_threshold {
                         self.status.mark_healthy();

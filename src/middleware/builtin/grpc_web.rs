@@ -1,6 +1,6 @@
 use crate::config::GrpcWebConfig;
 use bytes::{BufMut, Bytes, BytesMut};
-use hyper::header::{HeaderName, HeaderValue, CONTENT_TYPE};
+use hyper::header::{CONTENT_TYPE, HeaderName, HeaderValue};
 use hyper::{HeaderMap, Request, Response};
 use regex::Regex;
 use std::sync::OnceLock;
@@ -32,9 +32,7 @@ impl GrpcWebMiddleware {
             .iter()
             .filter_map(|pattern| {
                 // Convert glob-like patterns to regex
-                let regex_pattern = pattern
-                    .replace('.', "\\.")
-                    .replace('*', ".*");
+                let regex_pattern = pattern.replace('.', "\\.").replace('*', ".*");
                 Regex::new(&format!("^{}$", regex_pattern)).ok()
             })
             .collect();
@@ -55,7 +53,9 @@ impl GrpcWebMiddleware {
         req.headers()
             .get(CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
-            .map(|v| v.starts_with(GRPC_WEB_CONTENT_TYPE) || v.starts_with(GRPC_WEB_TEXT_CONTENT_TYPE))
+            .map(|v| {
+                v.starts_with(GRPC_WEB_CONTENT_TYPE) || v.starts_with(GRPC_WEB_TEXT_CONTENT_TYPE)
+            })
             .unwrap_or(false)
     }
 
@@ -82,7 +82,9 @@ impl GrpcWebMiddleware {
 
         let is_grpc_web = content_type
             .as_ref()
-            .map(|ct| ct.starts_with(GRPC_WEB_CONTENT_TYPE) || ct.starts_with(GRPC_WEB_TEXT_CONTENT_TYPE))
+            .map(|ct| {
+                ct.starts_with(GRPC_WEB_CONTENT_TYPE) || ct.starts_with(GRPC_WEB_TEXT_CONTENT_TYPE)
+            })
             .unwrap_or(false);
 
         if !is_grpc_web {
@@ -114,7 +116,8 @@ impl GrpcWebMiddleware {
 
         headers.insert(
             CONTENT_TYPE,
-            HeaderValue::from_str(new_content_type).unwrap_or(HeaderValue::from_static(GRPC_WEB_CONTENT_TYPE)),
+            HeaderValue::from_str(new_content_type)
+                .unwrap_or(HeaderValue::from_static(GRPC_WEB_CONTENT_TYPE)),
         );
 
         // Add CORS headers for browser compatibility
@@ -162,14 +165,16 @@ impl GrpcWebMiddleware {
 
         // gRPC status and message from headers (Trailers-Only response)
         if let Some(status) = response.headers().get("grpc-status")
-            && let Ok(s) = status.to_str() {
-                trailers.push(("grpc-status".to_string(), s.to_string()));
-            }
+            && let Ok(s) = status.to_str()
+        {
+            trailers.push(("grpc-status".to_string(), s.to_string()));
+        }
 
         if let Some(message) = response.headers().get("grpc-message")
-            && let Ok(s) = message.to_str() {
-                trailers.push(("grpc-message".to_string(), s.to_string()));
-            }
+            && let Ok(s) = message.to_str()
+        {
+            trailers.push(("grpc-message".to_string(), s.to_string()));
+        }
 
         trailers
     }
@@ -217,7 +222,10 @@ fn base64_decode(data: &[u8]) -> Option<Vec<u8>> {
     static DECODE_TABLE: OnceLock<[i8; 256]> = OnceLock::new();
     let table = DECODE_TABLE.get_or_init(|| {
         let mut table = [-1i8; 256];
-        for (i, &c) in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".iter().enumerate() {
+        for (i, &c) in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+            .iter()
+            .enumerate()
+        {
             table[c as usize] = i as i8;
         }
         table

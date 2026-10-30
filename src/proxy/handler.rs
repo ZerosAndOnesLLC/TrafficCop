@@ -5,15 +5,17 @@ use crate::middleware::{BoxFuture, Endpoint, Middleware, MiddlewareRegistry, Nex
 use crate::router::Router;
 use crate::service::ServiceManager;
 use bytes::Bytes;
-use http_body_util::{combinators::BoxBody, BodyExt, Full};
-use hyper::header::{HeaderName, HeaderValue, CONNECTION, CONTENT_TYPE, HOST, TRANSFER_ENCODING, UPGRADE};
-use hyper::{body::Incoming, Request, Response, StatusCode, Uri};
+use http_body_util::{BodyExt, Full, combinators::BoxBody};
+use hyper::header::{
+    CONNECTION, CONTENT_TYPE, HOST, HeaderName, HeaderValue, TRANSFER_ENCODING, UPGRADE,
+};
+use hyper::{Request, Response, StatusCode, Uri, body::Incoming};
 use hyper_rustls::HttpsConnectorBuilder;
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::ClientConfig;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -23,11 +25,7 @@ use tracing::{debug, error, info, warn};
 use super::grpc;
 
 fn hop_by_hop_headers() -> &'static [HeaderName] {
-    static HEADERS: &[HeaderName] = &[
-        CONNECTION,
-        TRANSFER_ENCODING,
-        UPGRADE,
-    ];
+    static HEADERS: &[HeaderName] = &[CONNECTION, TRANSFER_ENCODING, UPGRADE];
     HEADERS
 }
 
@@ -152,7 +150,8 @@ impl ProxyHandler {
         // in the :authority pseudo-header, reflected on the request URI.
         let host_header_value = req.headers().get(HOST).cloned();
         let host_from_uri = req.uri().host().map(|h| h.to_string());
-        let host = host_header_value.as_ref()
+        let host = host_header_value
+            .as_ref()
             .and_then(|h| h.to_str().ok())
             .map(|h| h.split(':').next().unwrap_or(h))
             .or(host_from_uri.as_deref());
@@ -167,13 +166,19 @@ impl ProxyHandler {
         let log_path = path.to_string();
         let log_host = host.map(|h| h.to_string());
         let log_query = query.map(|q| q.to_string());
-        let log_user_agent = req.headers().get("user-agent")
+        let log_user_agent = req
+            .headers()
+            .get("user-agent")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
-        let log_referer = req.headers().get("referer")
+        let log_referer = req
+            .headers()
+            .get("referer")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
-        let log_xff = req.headers().get("x-forwarded-for")
+        let log_xff = req
+            .headers()
+            .get("x-forwarded-for")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
@@ -193,16 +198,9 @@ impl ProxyHandler {
         ) {
             Some(route) => route,
             None => {
-                debug!(
-                    "No route matched for {} {}",
-                    host.unwrap_or("-"),
-                    path
-                );
-                let response = Self::error_response_maybe_grpc(
-                    StatusCode::NOT_FOUND,
-                    "Not Found",
-                    is_grpc,
-                );
+                debug!("No route matched for {} {}", host.unwrap_or("-"), path);
+                let response =
+                    Self::error_response_maybe_grpc(StatusCode::NOT_FOUND, "Not Found", is_grpc);
                 let entry = AccessLogBuilder::new(remote_addr, &log_method, &log_path, "HTTP/1.1")
                     .host(log_host.as_deref())
                     .query(log_query.as_deref())
@@ -233,7 +231,18 @@ impl ProxyHandler {
 
         let response = if mw_instances.is_empty() {
             // No middleware — execute backend forwarding directly
-            self.forward_to_backend(req, remote_addr, service_name, services, passive_health, host, is_tls, is_grpc, log_start).await
+            self.forward_to_backend(
+                req,
+                remote_addr,
+                service_name,
+                services,
+                passive_health,
+                host,
+                is_tls,
+                is_grpc,
+                log_start,
+            )
+            .await
         } else {
             // Build middleware chain
             let mw_boxes: Vec<Box<dyn Middleware>> = mw_instances
@@ -346,7 +355,11 @@ impl ProxyHandler {
             match &service.balancer {
                 Some(balancer) => match balancer.next_server() {
                     Some(s) => {
-                        let url = s.url_arc.as_ref().map(Arc::clone).unwrap_or_else(|| Arc::from(s.url.as_str()));
+                        let url = s
+                            .url_arc
+                            .as_ref()
+                            .map(Arc::clone)
+                            .unwrap_or_else(|| Arc::from(s.url.as_str()));
                         (url, s.parsed_uri.clone())
                     }
                     None => {
@@ -377,27 +390,29 @@ impl ProxyHandler {
         // Check for WebSocket upgrade (not applicable for HTTP/2 backends)
         if !use_h2 && super::websocket::is_websocket_upgrade(&req) {
             debug!("Handling WebSocket upgrade to {}", backend_url);
-            return super::websocket::handle_websocket_upgrade(req, &backend_url, remote_addr).await;
+            return super::websocket::handle_websocket_upgrade(req, &backend_url, remote_addr)
+                .await;
         }
 
         // Build the proxied request — rewrite h2c:// to http:// for the actual connection
-        let backend_uri = match Self::build_backend_uri_fast(&backend_url, req.uri(), parsed_uri.as_ref()) {
-            Ok(uri) => {
-                if use_h2 {
-                    Self::rewrite_h2c_scheme(uri)
-                } else {
-                    uri
+        let backend_uri =
+            match Self::build_backend_uri_fast(&backend_url, req.uri(), parsed_uri.as_ref()) {
+                Ok(uri) => {
+                    if use_h2 {
+                        Self::rewrite_h2c_scheme(uri)
+                    } else {
+                        uri
+                    }
                 }
-            }
-            Err(e) => {
-                error!("Failed to build backend URI: {}", e);
-                return Ok(Self::error_response_maybe_grpc(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Internal Server Error",
-                    is_grpc,
-                ));
-            }
-        };
+                Err(e) => {
+                    error!("Failed to build backend URI: {}", e);
+                    return Ok(Self::error_response_maybe_grpc(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Internal Server Error",
+                        is_grpc,
+                    ));
+                }
+            };
 
         let proxied_req =
             match Self::build_proxied_request(req, backend_uri, remote_addr, host, is_tls, is_grpc)
@@ -503,19 +518,20 @@ impl ProxyHandler {
 
         if let Some(service) = services.get_service(service_name)
             && let Some(balancer) = &service.balancer
-                && let Some(idx) = balancer.find_server_index(backend_url) {
-                    match change {
-                        HealthChange::BecameUnhealthy => {
-                            warn!("Passive health: marking {} unhealthy", backend_url);
-                            balancer.mark_unhealthy(idx);
-                        }
-                        HealthChange::BecameHealthy => {
-                            info!("Passive health: marking {} healthy", backend_url);
-                            balancer.mark_healthy(idx);
-                        }
-                        HealthChange::NoChange => {}
-                    }
+            && let Some(idx) = balancer.find_server_index(backend_url)
+        {
+            match change {
+                HealthChange::BecameUnhealthy => {
+                    warn!("Passive health: marking {} unhealthy", backend_url);
+                    balancer.mark_unhealthy(idx);
                 }
+                HealthChange::BecameHealthy => {
+                    info!("Passive health: marking {} healthy", backend_url);
+                    balancer.mark_healthy(idx);
+                }
+                HealthChange::NoChange => {}
+            }
+        }
     }
 
     #[inline]
@@ -659,11 +675,12 @@ impl ProxyHandler {
         }
 
         if let Some(host) = original_host
-            && let Ok(val) = HeaderValue::from_str(host) {
-                parts
-                    .headers
-                    .insert(HeaderName::from_static("x-forwarded-host"), val);
-            }
+            && let Ok(val) = HeaderValue::from_str(host)
+        {
+            parts
+                .headers
+                .insert(HeaderName::from_static("x-forwarded-host"), val);
+        }
 
         let proto = if is_tls { "https" } else { "http" };
         parts.headers.insert(
@@ -673,9 +690,10 @@ impl ProxyHandler {
 
         // Set the Host header to the backend host
         if let Some(authority) = parts.uri.authority()
-            && let Ok(host_value) = HeaderValue::from_str(authority.as_str()) {
-                parts.headers.insert(HOST, host_value);
-            }
+            && let Ok(host_value) = HeaderValue::from_str(authority.as_str())
+        {
+            parts.headers.insert(HOST, host_value);
+        }
 
         let boxed_body = body.map_err(|e| e).boxed();
 
@@ -754,7 +772,10 @@ struct ForwardEndpoint<'a> {
 }
 
 impl Endpoint for ForwardEndpoint<'_> {
-    fn call(&self, req: Request<Incoming>) -> BoxFuture<'_, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+    fn call(
+        &self,
+        req: Request<Incoming>,
+    ) -> BoxFuture<'_, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(ProxyHandler::forward_to_backend_inner(
             self.client,
             self.h2_client,

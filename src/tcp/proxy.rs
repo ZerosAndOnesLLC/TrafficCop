@@ -47,16 +47,20 @@ impl TcpProxy {
         );
 
         // Find matching route
-        let route = match self.router.match_connection(entrypoint, sni.as_deref(), Some(client_addr)) {
-            Some(r) => r,
-            None => {
-                warn!(
-                    "TCP: No route found for connection from {} (SNI: {:?})",
-                    client_addr, sni
-                );
-                return;
-            }
-        };
+        let route =
+            match self
+                .router
+                .match_connection(entrypoint, sni.as_deref(), Some(client_addr))
+            {
+                Some(r) => r,
+                None => {
+                    warn!(
+                        "TCP: No route found for connection from {} (SNI: {:?})",
+                        client_addr, sni
+                    );
+                    return;
+                }
+            };
 
         // Get the backend service
         let service = match self.services.get_service(&route.service) {
@@ -82,21 +86,25 @@ impl TcpProxy {
         );
 
         // Connect to backend
-        let backend_stream = match timeout(CONNECT_TIMEOUT, TcpStream::connect(&backend.address)).await {
-            Ok(Ok(stream)) => stream,
-            Ok(Err(e)) => {
-                error!("TCP: Failed to connect to backend {}: {}", backend.address, e);
-                return;
-            }
-            Err(_) => {
-                error!(
-                    "TCP: Connection timeout to backend {} ({}s)",
-                    backend.address,
-                    CONNECT_TIMEOUT.as_secs()
-                );
-                return;
-            }
-        };
+        let backend_stream =
+            match timeout(CONNECT_TIMEOUT, TcpStream::connect(&backend.address)).await {
+                Ok(Ok(stream)) => stream,
+                Ok(Err(e)) => {
+                    error!(
+                        "TCP: Failed to connect to backend {}: {}",
+                        backend.address, e
+                    );
+                    return;
+                }
+                Err(_) => {
+                    error!(
+                        "TCP: Connection timeout to backend {} ({}s)",
+                        backend.address,
+                        CONNECT_TIMEOUT.as_secs()
+                    );
+                    return;
+                }
+            };
 
         // Set TCP nodelay for lower latency
         let _ = client.set_nodelay(true);
@@ -106,7 +114,10 @@ impl TcpProxy {
         // This is handled by the proxy function
 
         // Start bidirectional proxy
-        if let Err(e) = self.proxy_bidirectional(client, backend_stream, initial_data).await {
+        if let Err(e) = self
+            .proxy_bidirectional(client, backend_stream, initial_data)
+            .await
+        {
             debug!("TCP: Proxy ended for {}: {}", client_addr, e);
         }
 
@@ -115,7 +126,10 @@ impl TcpProxy {
 
     /// Peek at the TLS ClientHello to extract SNI
     /// Returns (Option<SNI>, initial_data)
-    async fn peek_tls_sni(&self, stream: &mut TcpStream) -> std::io::Result<(Option<String>, Vec<u8>)> {
+    async fn peek_tls_sni(
+        &self,
+        stream: &mut TcpStream,
+    ) -> std::io::Result<(Option<String>, Vec<u8>)> {
         // Read initial bytes to check for TLS
         let mut buf = vec![0u8; 1024];
 
@@ -278,7 +292,11 @@ impl TcpProxy {
         let client_to_backend = if initial_data.is_empty() {
             tokio::spawn(copy_stream(client_read, backend_write))
         } else {
-            tokio::spawn(copy_stream_with_initial(client_read, backend_write, initial_data))
+            tokio::spawn(copy_stream_with_initial(
+                client_read,
+                backend_write,
+                initial_data,
+            ))
         };
 
         let backend_to_client = tokio::spawn(copy_stream(backend_read, client_write));

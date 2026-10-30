@@ -1497,40 +1497,72 @@ pub struct MiddlewareConfig {
     pub errors: Option<ErrorsConfig>,
 
     /// Deprecated alias for ipAllowList (for backwards compatibility)
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "ipWhiteList")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "ipWhiteList"
+    )]
     pub ip_white_list: Option<IpAllowListConfig>,
 }
 
 impl MiddlewareConfig {
     /// Get the middleware type name
     pub fn middleware_type(&self) -> &'static str {
-        if self.rate_limit.is_some() { "rateLimit" }
-        else if self.ip_allow_list.is_some() { "ipAllowList" }
-        else if self.ip_white_list.is_some() { "ipWhiteList" }
-        else if self.ip_deny_list.is_some() { "ipDenyList" }
-        else if self.headers.is_some() { "headers" }
-        else if self.basic_auth.is_some() { "basicAuth" }
-        else if self.digest_auth.is_some() { "digestAuth" }
-        else if self.forward_auth.is_some() { "forwardAuth" }
-        else if self.compress.is_some() { "compress" }
-        else if self.retry.is_some() { "retry" }
-        else if self.circuit_breaker.is_some() { "circuitBreaker" }
-        else if self.redirect_scheme.is_some() { "redirectScheme" }
-        else if self.redirect_regex.is_some() { "redirectRegex" }
-        else if self.strip_prefix.is_some() { "stripPrefix" }
-        else if self.strip_prefix_regex.is_some() { "stripPrefixRegex" }
-        else if self.add_prefix.is_some() { "addPrefix" }
-        else if self.replace_path.is_some() { "replacePath" }
-        else if self.replace_path_regex.is_some() { "replacePathRegex" }
-        else if self.chain.is_some() { "chain" }
-        else if self.buffering.is_some() { "buffering" }
-        else if self.in_flight_req.is_some() { "inFlightReq" }
-        else if self.pass_tls_client_cert.is_some() { "passTLSClientCert" }
-        else if self.content_type.is_some() { "contentType" }
-        else if self.grpc_web.is_some() { "grpcWeb" }
-        else if self.jwt.is_some() { "jwt" }
-        else if self.errors.is_some() { "errors" }
-        else { "unknown" }
+        if self.rate_limit.is_some() {
+            "rateLimit"
+        } else if self.ip_allow_list.is_some() {
+            "ipAllowList"
+        } else if self.ip_white_list.is_some() {
+            "ipWhiteList"
+        } else if self.ip_deny_list.is_some() {
+            "ipDenyList"
+        } else if self.headers.is_some() {
+            "headers"
+        } else if self.basic_auth.is_some() {
+            "basicAuth"
+        } else if self.digest_auth.is_some() {
+            "digestAuth"
+        } else if self.forward_auth.is_some() {
+            "forwardAuth"
+        } else if self.compress.is_some() {
+            "compress"
+        } else if self.retry.is_some() {
+            "retry"
+        } else if self.circuit_breaker.is_some() {
+            "circuitBreaker"
+        } else if self.redirect_scheme.is_some() {
+            "redirectScheme"
+        } else if self.redirect_regex.is_some() {
+            "redirectRegex"
+        } else if self.strip_prefix.is_some() {
+            "stripPrefix"
+        } else if self.strip_prefix_regex.is_some() {
+            "stripPrefixRegex"
+        } else if self.add_prefix.is_some() {
+            "addPrefix"
+        } else if self.replace_path.is_some() {
+            "replacePath"
+        } else if self.replace_path_regex.is_some() {
+            "replacePathRegex"
+        } else if self.chain.is_some() {
+            "chain"
+        } else if self.buffering.is_some() {
+            "buffering"
+        } else if self.in_flight_req.is_some() {
+            "inFlightReq"
+        } else if self.pass_tls_client_cert.is_some() {
+            "passTLSClientCert"
+        } else if self.content_type.is_some() {
+            "contentType"
+        } else if self.grpc_web.is_some() {
+            "grpcWeb"
+        } else if self.jwt.is_some() {
+            "jwt"
+        } else if self.errors.is_some() {
+            "errors"
+        } else {
+            "unknown"
+        }
     }
 
     /// Get the effective IP allow list config (supports deprecated ipWhiteList)
@@ -2575,7 +2607,6 @@ pub enum StoreConfig {
     #[serde(rename = "redis")]
     Redis(Box<RedisStoreConfig>),
 }
-
 
 /// Redis/Valkey store configuration
 /// Compatible with Traefik's redis provider format

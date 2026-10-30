@@ -6,7 +6,7 @@ mod manager;
 mod storage;
 
 /// HTTP-01 challenge handler and standalone request matcher.
-pub use challenge::{try_handle_challenge, ChallengeHandler};
+pub use challenge::{ChallengeHandler, try_handle_challenge};
 /// ACME protocol client for account management and certificate ordering.
 pub use client::{AcmeClient, PendingChallenge};
 /// Certificate lifecycle manager with automatic renewal.

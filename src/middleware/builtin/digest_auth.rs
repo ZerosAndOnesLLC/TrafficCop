@@ -111,7 +111,16 @@ impl DigestAuthMiddleware {
         let cnonce = params.get("cnonce").map(|s| s.as_str());
 
         // Verify the response
-        if self.verify_response(username, nonce, uri, response, req.method().as_str(), qop, nc, cnonce) {
+        if self.verify_response(
+            username,
+            nonce,
+            uri,
+            response,
+            req.method().as_str(),
+            qop,
+            nc,
+            cnonce,
+        ) {
             AuthResult::Authenticated(username.to_string())
         } else {
             AuthResult::Invalid
@@ -147,7 +156,10 @@ impl DigestAuthMiddleware {
                 let nc = nc.unwrap_or("00000001");
                 let cnonce = cnonce.unwrap_or("");
                 let qop_val = qop.unwrap_or("auth");
-                md5_hex(&format!("{}:{}:{}:{}:{}:{}", ha1, nonce, nc, cnonce, qop_val, ha2))
+                md5_hex(&format!(
+                    "{}:{}:{}:{}:{}:{}",
+                    ha1, nonce, nc, cnonce, qop_val, ha2
+                ))
             }
             _ => {
                 // Without qop: response = MD5(HA1:nonce:HA2)
@@ -281,10 +293,7 @@ mod tests {
 
     fn test_config() -> DigestAuthConfig {
         DigestAuthConfig {
-            users: vec![
-                "admin:secret123".to_string(),
-                "user:password".to_string(),
-            ],
+            users: vec!["admin:secret123".to_string(), "user:password".to_string()],
             users_file: None,
             realm: Some("Test Realm".to_string()),
             header_field: None,
@@ -298,7 +307,10 @@ mod tests {
         assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
         assert_eq!(md5_hex("a"), "0cc175b9c0f1b6a831c399e269772661");
         assert_eq!(md5_hex("abc"), "900150983cd24fb0d6963f7d28e17f72");
-        assert_eq!(md5_hex("message digest"), "f96b697d7cb7938d525a2f31aaf161d0");
+        assert_eq!(
+            md5_hex("message digest"),
+            "f96b697d7cb7938d525a2f31aaf161d0"
+        );
     }
 
     #[test]
@@ -311,7 +323,8 @@ mod tests {
 
     #[test]
     fn test_parse_digest_params() {
-        let input = r#"username="admin", realm="Test", nonce="abc123", uri="/test", response="xyz""#;
+        let input =
+            r#"username="admin", realm="Test", nonce="abc123", uri="/test", response="xyz""#;
         let params = parse_digest_params(input).unwrap();
 
         assert_eq!(params.get("username"), Some(&"admin".to_string()));
@@ -326,7 +339,10 @@ mod tests {
         let middleware = DigestAuthMiddleware::new(test_config());
         let req = Request::builder().body(()).unwrap();
 
-        assert!(matches!(middleware.authenticate(&req), AuthResult::NeedsAuth));
+        assert!(matches!(
+            middleware.authenticate(&req),
+            AuthResult::NeedsAuth
+        ));
     }
 
     #[test]
@@ -347,7 +363,12 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
-        let www_auth = response.headers().get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
+        let www_auth = response
+            .headers()
+            .get(WWW_AUTHENTICATE)
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert!(www_auth.contains("Digest"));
         assert!(www_auth.contains("Test Realm"));
         assert!(www_auth.contains("nonce="));
@@ -396,7 +417,10 @@ mod tests {
         let qop = "auth";
 
         // With qop: response = MD5(HA1:nonce:nc:cnonce:qop:HA2)
-        let expected_response = md5_hex(&format!("{}:{}:{}:{}:{}:{}", ha1, nonce, nc, cnonce, qop, ha2));
+        let expected_response = md5_hex(&format!(
+            "{}:{}:{}:{}:{}:{}",
+            ha1, nonce, nc, cnonce, qop, ha2
+        ));
 
         assert!(middleware.verify_response(
             "admin",

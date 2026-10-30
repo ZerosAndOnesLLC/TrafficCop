@@ -28,10 +28,7 @@ impl WeightedServiceRouter {
             .collect();
 
         let total_weight: i64 = services.iter().map(|s| s.weight as i64).sum();
-        let current_weights: Vec<AtomicI64> = services
-            .iter()
-            .map(|_| AtomicI64::new(0))
-            .collect();
+        let current_weights: Vec<AtomicI64> = services.iter().map(|_| AtomicI64::new(0)).collect();
 
         Self {
             services,
@@ -61,7 +58,8 @@ impl WeightedServiceRouter {
 
         for (i, service) in self.services.iter().enumerate() {
             // Add the static weight
-            let current = self.current_weights[i].fetch_add(service.weight as i64, Ordering::Relaxed)
+            let current = self.current_weights[i]
+                .fetch_add(service.weight as i64, Ordering::Relaxed)
                 + service.weight as i64;
 
             if current > max_weight {
@@ -166,10 +164,7 @@ mod tests {
 
     #[test]
     fn test_weighted_router_equal_weights() {
-        let config = make_weighted_service(vec![
-            ("service-a", 1),
-            ("service-b", 1),
-        ]);
+        let config = make_weighted_service(vec![("service-a", 1), ("service-b", 1)]);
         let router = WeightedServiceRouter::new(&config);
 
         let mut counts: HashMap<&str, usize> = HashMap::new();
@@ -189,8 +184,8 @@ mod tests {
     #[test]
     fn test_weighted_router_unequal_weights() {
         let config = make_weighted_service(vec![
-            ("service-a", 9),  // 90%
-            ("service-b", 1),  // 10%
+            ("service-a", 9), // 90%
+            ("service-b", 1), // 10%
         ]);
         let router = WeightedServiceRouter::new(&config);
 
@@ -211,9 +206,9 @@ mod tests {
     #[test]
     fn test_weighted_router_three_services() {
         let config = make_weighted_service(vec![
-            ("service-a", 5),  // 50%
-            ("service-b", 3),  // 30%
-            ("service-c", 2),  // 20%
+            ("service-a", 5), // 50%
+            ("service-b", 3), // 30%
+            ("service-c", 2), // 20%
         ]);
         let router = WeightedServiceRouter::new(&config);
 
@@ -245,10 +240,7 @@ mod tests {
 
     #[test]
     fn test_random_service() {
-        let config = make_weighted_service(vec![
-            ("service-a", 9),
-            ("service-b", 1),
-        ]);
+        let config = make_weighted_service(vec![("service-a", 9), ("service-b", 1)]);
         let router = WeightedServiceRouter::new(&config);
 
         let mut counts: HashMap<&str, usize> = HashMap::new();

@@ -1,16 +1,16 @@
 use super::builtin::{
-    BasicAuthMiddleware, CorsMiddleware, HeadersMiddleware, IpAllowListMiddleware,
-    IpDenyListMiddleware, RateLimitMiddleware, RedirectSchemeMiddleware,
-    AddPrefixMiddleware, StripPrefixMiddleware, ReplacePathMiddleware,
-    StripPrefixRegexMiddleware, ReplacePathRegexMiddleware,
+    AddPrefixMiddleware, BasicAuthMiddleware, CorsMiddleware, HeadersMiddleware,
+    IpAllowListMiddleware, IpDenyListMiddleware, RateLimitMiddleware, RedirectSchemeMiddleware,
+    ReplacePathMiddleware, ReplacePathRegexMiddleware, StripPrefixMiddleware,
+    StripPrefixRegexMiddleware,
 };
 use super::{BoxFuture, Middleware, Next};
 use crate::config::MiddlewareConfig;
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full};
-use hyper::header::{HeaderValue, CONTENT_TYPE};
-use hyper::{body::Incoming, Request, Response, StatusCode};
+use hyper::header::{CONTENT_TYPE, HeaderValue};
+use hyper::{Request, Response, StatusCode, body::Incoming};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -40,7 +40,11 @@ impl MiddlewareRegistry {
                 debug!("Registered middleware '{}'", name);
                 middlewares.insert(name.clone(), mw);
             } else {
-                warn!("Unsupported middleware type for '{}': {}", name, config.middleware_type());
+                warn!(
+                    "Unsupported middleware type for '{}': {}",
+                    name,
+                    config.middleware_type()
+                );
             }
         }
 
@@ -154,21 +158,23 @@ impl MiddlewareRegistry {
 
         // Strip prefix regex
         if let Some(strip_regex_config) = &config.strip_prefix_regex
-            && let Some(strip) = StripPrefixRegexMiddleware::new(strip_regex_config.clone()) {
-                return Some(Arc::new(StripPrefixRegexWrapper {
-                    name: name.to_string(),
-                    inner: strip,
-                }));
-            }
+            && let Some(strip) = StripPrefixRegexMiddleware::new(strip_regex_config.clone())
+        {
+            return Some(Arc::new(StripPrefixRegexWrapper {
+                name: name.to_string(),
+                inner: strip,
+            }));
+        }
 
         // Replace path regex
         if let Some(replace_regex_config) = &config.replace_path_regex
-            && let Some(replace) = ReplacePathRegexMiddleware::new(replace_regex_config.clone()) {
-                return Some(Arc::new(ReplacePathRegexWrapper {
-                    name: name.to_string(),
-                    inner: replace,
-                }));
-            }
+            && let Some(replace) = ReplacePathRegexMiddleware::new(replace_regex_config.clone())
+        {
+            return Some(Arc::new(ReplacePathRegexWrapper {
+                name: name.to_string(),
+                inner: replace,
+            }));
+        }
 
         // Compress middleware
         if let Some(compress_config) = &config.compress {
@@ -211,9 +217,15 @@ struct HeadersWrapper {
 }
 
 impl Middleware for HeadersWrapper {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    fn handle<'a>(&'a self, mut req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+    fn handle<'a>(
+        &'a self,
+        mut req: Request<Incoming>,
+        next: Next<'a>,
+    ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
             self.inner.apply_request(req.headers_mut());
             let mut resp = next.run(req).await?;
@@ -231,9 +243,15 @@ struct HeadersAndCorsWrapper {
 }
 
 impl Middleware for HeadersAndCorsWrapper {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    fn handle<'a>(&'a self, mut req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+    fn handle<'a>(
+        &'a self,
+        mut req: Request<Incoming>,
+        next: Next<'a>,
+    ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
             // Handle CORS preflight
             if self.cors.is_preflight(&req) {
@@ -241,17 +259,23 @@ impl Middleware for HeadersAndCorsWrapper {
                     let (parts, _) = resp.into_parts();
                     return Ok(Response::from_parts(
                         parts,
-                        Full::new(Bytes::new()).map_err(|never| match never {}).boxed(),
+                        Full::new(Bytes::new())
+                            .map_err(|never| match never {})
+                            .boxed(),
                     ));
                 }
-                return Ok(error_response(StatusCode::FORBIDDEN, "CORS origin not allowed"));
+                return Ok(error_response(
+                    StatusCode::FORBIDDEN,
+                    "CORS origin not allowed",
+                ));
             }
 
             let origin = CorsMiddleware::get_origin(&req);
             self.headers.apply_request(req.headers_mut());
             let mut resp = next.run(req).await?;
             self.headers.apply_response(resp.headers_mut());
-            self.cors.apply_headers(origin.as_deref(), resp.headers_mut());
+            self.cors
+                .apply_headers(origin.as_deref(), resp.headers_mut());
             Ok(resp)
         })
     }
@@ -264,14 +288,24 @@ struct RateLimitWrapper {
 }
 
 impl Middleware for RateLimitWrapper {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    fn handle<'a>(&'a self, req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+    fn handle<'a>(
+        &'a self,
+        req: Request<Incoming>,
+        next: Next<'a>,
+    ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
             if let Some(ip) = get_client_ip(&req)
-                && !self.inner.is_allowed(ip) {
-                    return Ok(error_response(StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded"));
-                }
+                && !self.inner.is_allowed(ip)
+            {
+                return Ok(error_response(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "Rate limit exceeded",
+                ));
+            }
             next.run(req).await
         })
     }
@@ -284,17 +318,24 @@ struct IpAllowWrapper {
 }
 
 impl Middleware for IpAllowWrapper {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    fn handle<'a>(&'a self, req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+    fn handle<'a>(
+        &'a self,
+        req: Request<Incoming>,
+        next: Next<'a>,
+    ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
             if self.inner.has_rules()
                 && let Some(ip) = get_client_ip(&req)
-                    && !self.inner.is_allowed(ip) {
-                        let status = StatusCode::from_u16(self.inner.reject_status_code())
-                            .unwrap_or(StatusCode::FORBIDDEN);
-                        return Ok(error_response(status, "Forbidden"));
-                    }
+                && !self.inner.is_allowed(ip)
+            {
+                let status = StatusCode::from_u16(self.inner.reject_status_code())
+                    .unwrap_or(StatusCode::FORBIDDEN);
+                return Ok(error_response(status, "Forbidden"));
+            }
             next.run(req).await
         })
     }
@@ -307,15 +348,22 @@ struct IpDenyWrapper {
 }
 
 impl Middleware for IpDenyWrapper {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    fn handle<'a>(&'a self, req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+    fn handle<'a>(
+        &'a self,
+        req: Request<Incoming>,
+        next: Next<'a>,
+    ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
             if self.inner.has_rules()
                 && let Some(ip) = get_client_ip(&req)
-                    && self.inner.is_denied(ip) {
-                        return Ok(error_response(StatusCode::FORBIDDEN, "Forbidden"));
-                    }
+                && self.inner.is_denied(ip)
+            {
+                return Ok(error_response(StatusCode::FORBIDDEN, "Forbidden"));
+            }
             next.run(req).await
         })
     }
@@ -328,16 +376,24 @@ struct BasicAuthWrapper {
 }
 
 impl Middleware for BasicAuthWrapper {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    fn handle<'a>(&'a self, req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+    fn handle<'a>(
+        &'a self,
+        req: Request<Incoming>,
+        next: Next<'a>,
+    ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
             if !self.inner.is_authenticated(&req) {
                 let resp = self.inner.unauthorized_response();
                 let (parts, _) = resp.into_parts();
                 return Ok(Response::from_parts(
                     parts,
-                    Full::new(Bytes::from("Unauthorized")).map_err(|never| match never {}).boxed(),
+                    Full::new(Bytes::from("Unauthorized"))
+                        .map_err(|never| match never {})
+                        .boxed(),
                 ));
             }
             next.run(req).await
@@ -352,11 +408,18 @@ struct RedirectSchemeWrapper {
 }
 
 impl Middleware for RedirectSchemeWrapper {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    fn handle<'a>(&'a self, req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+    fn handle<'a>(
+        &'a self,
+        req: Request<Incoming>,
+        next: Next<'a>,
+    ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
-            let is_tls = req.extensions()
+            let is_tls = req
+                .extensions()
                 .get::<RequestContext>()
                 .map(|ctx| ctx.is_tls)
                 .unwrap_or(false);
@@ -366,7 +429,9 @@ impl Middleware for RedirectSchemeWrapper {
                 let (parts, _) = resp.into_parts();
                 return Ok(Response::from_parts(
                     parts,
-                    Full::new(Bytes::new()).map_err(|never| match never {}).boxed(),
+                    Full::new(Bytes::new())
+                        .map_err(|never| match never {})
+                        .boxed(),
                 ));
             }
             next.run(req).await
@@ -381,9 +446,15 @@ struct StripPrefixWrapper {
 }
 
 impl Middleware for StripPrefixWrapper {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    fn handle<'a>(&'a self, mut req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+    fn handle<'a>(
+        &'a self,
+        mut req: Request<Incoming>,
+        next: Next<'a>,
+    ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
             if let Some((new_uri, prefix)) = self.inner.transform_uri(req.uri()) {
                 *req.uri_mut() = new_uri;
@@ -403,9 +474,15 @@ struct AddPrefixWrapper {
 }
 
 impl Middleware for AddPrefixWrapper {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    fn handle<'a>(&'a self, mut req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+    fn handle<'a>(
+        &'a self,
+        mut req: Request<Incoming>,
+        next: Next<'a>,
+    ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
             if let Some(new_uri) = self.inner.transform_uri(req.uri()) {
                 *req.uri_mut() = new_uri;
@@ -422,9 +499,15 @@ struct ReplacePathWrapper {
 }
 
 impl Middleware for ReplacePathWrapper {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    fn handle<'a>(&'a self, mut req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+    fn handle<'a>(
+        &'a self,
+        mut req: Request<Incoming>,
+        next: Next<'a>,
+    ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
             if let Some((new_uri, original)) = self.inner.transform_uri(req.uri()) {
                 *req.uri_mut() = new_uri;
@@ -444,9 +527,15 @@ struct StripPrefixRegexWrapper {
 }
 
 impl Middleware for StripPrefixRegexWrapper {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    fn handle<'a>(&'a self, mut req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+    fn handle<'a>(
+        &'a self,
+        mut req: Request<Incoming>,
+        next: Next<'a>,
+    ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
             if let Some((new_uri, prefix)) = self.inner.transform_uri(req.uri()) {
                 *req.uri_mut() = new_uri;
@@ -466,9 +555,15 @@ struct ReplacePathRegexWrapper {
 }
 
 impl Middleware for ReplacePathRegexWrapper {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    fn handle<'a>(&'a self, mut req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+    fn handle<'a>(
+        &'a self,
+        mut req: Request<Incoming>,
+        next: Next<'a>,
+    ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
             if let Some((new_uri, original)) = self.inner.transform_uri(req.uri()) {
                 *req.uri_mut() = new_uri;
@@ -489,9 +584,15 @@ struct CompressWrapper {
 }
 
 impl Middleware for CompressWrapper {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    fn handle<'a>(&'a self, req: Request<Incoming>, next: Next<'a>) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
+    fn handle<'a>(
+        &'a self,
+        req: Request<Incoming>,
+        next: Next<'a>,
+    ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         // Compression needs to collect the response body and re-encode it,
         // which requires significant changes to the response pipeline.
         // For now, pass through — compression will be done at the response level

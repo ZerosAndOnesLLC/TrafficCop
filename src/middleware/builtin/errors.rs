@@ -145,7 +145,11 @@ mod tests {
 
     #[test]
     fn test_invalid_range_ignored() {
-        let config = make_config(vec!["invalid", "999", "404"], "error-service", "/{status}.html");
+        let config = make_config(
+            vec!["invalid", "999", "404"],
+            "error-service",
+            "/{status}.html",
+        );
         let middleware = ErrorsMiddleware::new(config);
 
         // Only 404 should be valid

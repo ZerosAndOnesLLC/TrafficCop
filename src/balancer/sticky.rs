@@ -80,9 +80,10 @@ impl StickySessionManager {
 
         // Check local cache first
         if let Some(entry) = self.local_cache.get(&session_id)
-            && entry.cached_at.elapsed() < self.local_cache_ttl {
-                return self.find_server_index(&entry.server_url);
-            }
+            && entry.cached_at.elapsed() < self.local_cache_ttl
+        {
+            return self.find_server_index(&entry.server_url);
+        }
 
         None
     }
@@ -93,13 +94,17 @@ impl StickySessionManager {
 
         // Check local cache first
         if let Some(entry) = self.local_cache.get(&session_id)
-            && entry.cached_at.elapsed() < self.local_cache_ttl {
-                return self.find_server_index(&entry.server_url);
-            }
+            && entry.cached_at.elapsed() < self.local_cache_ttl
+        {
+            return self.find_server_index(&entry.server_url);
+        }
 
         // Check distributed store
         if let Some(store) = &self.store {
-            match store.sticky_session_get(&self.service_name, &session_id).await {
+            match store
+                .sticky_session_get(&self.service_name, &session_id)
+                .await
+            {
                 Ok(Some(server_url)) => {
                     // Update local cache
                     self.local_cache.insert(
@@ -178,11 +183,16 @@ impl StickySessionManager {
         // Store in distributed store
         if let Some(store) = &self.store
             && let Err(e) = store
-                .sticky_session_set(&self.service_name, &session_id, &server.url, self.session_ttl)
+                .sticky_session_set(
+                    &self.service_name,
+                    &session_id,
+                    &server.url,
+                    self.session_ttl,
+                )
                 .await
-            {
-                warn!("Failed to store session in distributed store: {}", e);
-            }
+        {
+            warn!("Failed to store session in distributed store: {}", e);
+        }
 
         Some(session_id)
     }
@@ -232,8 +242,6 @@ impl StickySessionManager {
         for cookie in cookies.split(';') {
             let cookie = cookie.trim();
             let (name, value) = cookie.split_once('=')?;
-            
-            
 
             if name.trim() == self.cookie_config.name {
                 return Some(value.to_string());
@@ -273,9 +281,9 @@ impl StickySessionManager {
             && let Err(e) = store
                 .sticky_session_delete(&self.service_name, session_id)
                 .await
-            {
-                warn!("Failed to delete session from distributed store: {}", e);
-            }
+        {
+            warn!("Failed to delete session from distributed store: {}", e);
+        }
     }
 
     /// Get session count (for metrics)

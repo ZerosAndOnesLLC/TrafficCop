@@ -6,9 +6,8 @@ pub mod registry;
 
 /// Core built-in middleware types re-exported for convenience.
 pub use builtin::{
-    AccessLogWriter, BasicAuthMiddleware, CorsMiddleware, HeadersMiddleware,
-    IpAllowListMiddleware, IpDenyListMiddleware, RateLimitMiddleware,
-    RedirectSchemeMiddleware,
+    AccessLogWriter, BasicAuthMiddleware, CorsMiddleware, HeadersMiddleware, IpAllowListMiddleware,
+    IpDenyListMiddleware, RateLimitMiddleware, RedirectSchemeMiddleware,
 };
 /// Ordered chain of middleware to execute per request.
 pub use chain::MiddlewareChain;
@@ -17,7 +16,7 @@ pub use registry::{MiddlewareRegistry, RequestContext};
 
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
-use hyper::{body::Incoming, Request, Response};
+use hyper::{Request, Response, body::Incoming};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -42,7 +41,10 @@ pub trait Middleware: Send + Sync {
 /// allowing the future to borrow data owned by the endpoint.
 pub trait Endpoint: Send + Sync {
     /// Handle the request at the end of the middleware chain (e.g., proxy to backend).
-    fn call(&self, req: Request<Incoming>) -> BoxFuture<'_, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>>;
+    fn call(
+        &self,
+        req: Request<Incoming>,
+    ) -> BoxFuture<'_, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>>;
 }
 
 /// Continuation handle passed to middleware; calling `run` invokes the next middleware or endpoint.

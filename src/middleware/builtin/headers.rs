@@ -1,6 +1,6 @@
 use crate::config::HeadersConfig;
-use hyper::header::{HeaderName, HeaderValue};
 use hyper::HeaderMap;
+use hyper::header::{HeaderName, HeaderValue};
 
 /// Headers middleware for adding/removing request and response headers
 /// In Traefik, empty header values mean "remove this header"

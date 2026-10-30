@@ -2,7 +2,7 @@
 //!
 //! Parses strings like "300ms", "1.5s", "2m", "1h30m" and integer/float seconds.
 
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::fmt;
 use std::str::FromStr;
 use std::time::Duration as StdDuration;
@@ -272,10 +272,7 @@ mod tests {
 
     #[test]
     fn test_parse_simple() {
-        assert_eq!(
-            "100ms".parse::<Duration>().unwrap().as_millis(),
-            100
-        );
+        assert_eq!("100ms".parse::<Duration>().unwrap().as_millis(), 100);
         assert_eq!("10s".parse::<Duration>().unwrap().as_secs(), 10);
         assert_eq!("5m".parse::<Duration>().unwrap().as_secs(), 300);
         assert_eq!("2h".parse::<Duration>().unwrap().as_secs(), 7200);
@@ -283,30 +280,15 @@ mod tests {
 
     #[test]
     fn test_parse_compound() {
-        assert_eq!(
-            "1h30m".parse::<Duration>().unwrap().as_secs(),
-            5400
-        );
-        assert_eq!(
-            "1m30s".parse::<Duration>().unwrap().as_secs(),
-            90
-        );
-        assert_eq!(
-            "1h30m45s".parse::<Duration>().unwrap().as_secs(),
-            5445
-        );
+        assert_eq!("1h30m".parse::<Duration>().unwrap().as_secs(), 5400);
+        assert_eq!("1m30s".parse::<Duration>().unwrap().as_secs(), 90);
+        assert_eq!("1h30m45s".parse::<Duration>().unwrap().as_secs(), 5445);
     }
 
     #[test]
     fn test_parse_decimal() {
-        assert_eq!(
-            "1.5s".parse::<Duration>().unwrap().as_millis(),
-            1500
-        );
-        assert_eq!(
-            "0.5m".parse::<Duration>().unwrap().as_secs(),
-            30
-        );
+        assert_eq!("1.5s".parse::<Duration>().unwrap().as_millis(), 1500);
+        assert_eq!("0.5m".parse::<Duration>().unwrap().as_secs(), 30);
     }
 
     #[test]

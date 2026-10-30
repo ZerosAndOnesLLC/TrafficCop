@@ -8,8 +8,8 @@ mod resolver;
 
 /// Re-exports from the ACME submodule for certificate automation.
 pub use acme::{
-    try_handle_challenge, AcmeClient, AcmeManager, AcmeManagerBuilder, ChallengeHandler,
-    PendingChallenge, StorageManager, StoredCertificate,
+    AcmeClient, AcmeManager, AcmeManagerBuilder, ChallengeHandler, PendingChallenge,
+    StorageManager, StoredCertificate, try_handle_challenge,
 };
 /// Re-exports for mutual TLS client authentication.
 pub use mtls::{ClientAuthMode, ClientCertInfo, MtlsConfigBuilder};
@@ -18,11 +18,11 @@ pub use resolver::CertificateResolver;
 
 use crate::config::TlsConfig;
 use anyhow::{Context, Result};
-use rustls::pki_types::CertificateDer;
-use rustls::server::ResolvesServerCert;
 use rustls::ServerConfig;
-use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::CertificateDer;
 use rustls::pki_types::PrivateKeyDer;
+use rustls::pki_types::pem::PemObject;
+use rustls::server::ResolvesServerCert;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
@@ -46,7 +46,6 @@ impl TlsAcceptor {
             config: Arc::new(config),
         }))
     }
-
 
     /// Build a TLS acceptor from certificate and key PEM files.
     pub fn from_files(cert_path: &str, key_path: &str) -> Result<Self> {

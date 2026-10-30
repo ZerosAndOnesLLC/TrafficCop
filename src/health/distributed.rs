@@ -2,11 +2,11 @@ use crate::config::HealthCheck;
 use crate::store::{HealthStatus as StoreHealthStatus, Store};
 use hyper::body::Bytes;
 use hyper::{Method, Request, StatusCode};
-use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::time::{interval, timeout};
 use tracing::{debug, info, warn};
@@ -74,7 +74,11 @@ impl DistributedHealthChecker {
             // Only perform health check if we're the leader
             if !self.is_leader.load(Ordering::Relaxed) {
                 // Not leader, just read health status from store
-                match self.store.health_get(&self.service_name, &self.server_url).await {
+                match self
+                    .store
+                    .health_get(&self.service_name, &self.server_url)
+                    .await
+                {
                     Ok(Some(status)) => {
                         current_health = status.healthy;
                         debug!(
@@ -138,7 +142,11 @@ impl DistributedHealthChecker {
                 },
             };
 
-            if let Err(e) = self.store.health_set(&self.service_name, &self.server_url, &status).await {
+            if let Err(e) = self
+                .store
+                .health_set(&self.service_name, &self.server_url, &status)
+                .await
+            {
                 warn!("Failed to update health status in store: {}", e);
             }
         }

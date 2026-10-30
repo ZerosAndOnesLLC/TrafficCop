@@ -19,11 +19,7 @@ pub struct AcmeManager {
 
 impl AcmeManager {
     /// Create a new ACME manager
-    pub async fn new(
-        storage_path: &str,
-        email: &str,
-        ca_server: Option<&str>,
-    ) -> Result<Self> {
+    pub async fn new(storage_path: &str, email: &str, ca_server: Option<&str>) -> Result<Self> {
         let storage = Arc::new(StorageManager::new(storage_path)?);
         let mut client = AcmeClient::new(Arc::clone(&storage), email, ca_server);
 
@@ -148,9 +144,7 @@ impl AcmeManagerBuilder {
 
     /// Use Let's Encrypt staging server (for testing)
     pub fn staging(mut self) -> Self {
-        self.ca_server = Some(
-            "https://acme-staging-v02.api.letsencrypt.org/directory".to_string(),
-        );
+        self.ca_server = Some("https://acme-staging-v02.api.letsencrypt.org/directory".to_string());
         self
     }
 
@@ -174,12 +168,8 @@ impl AcmeManagerBuilder {
 
     /// Build, initialize, and start the ACME manager with certificate renewal.
     pub async fn build(self) -> Result<Arc<AcmeManager>> {
-        let manager = AcmeManager::new(
-            &self.storage_path,
-            &self.email,
-            self.ca_server.as_deref(),
-        )
-        .await?;
+        let manager =
+            AcmeManager::new(&self.storage_path, &self.email, self.ca_server.as_deref()).await?;
 
         let manager = Arc::new(manager);
 

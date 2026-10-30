@@ -5,7 +5,7 @@
 
 use crate::config::Config;
 use anyhow::Result;
-use notify::{recommended_watcher, Event, EventKind, RecursiveMode, Watcher};
+use notify::{Event, EventKind, RecursiveMode, Watcher, recommended_watcher};
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -49,10 +49,7 @@ impl ConfigWatcher {
         // On BSD (kqueue), watching a file loses the watch when the inode changes
         // (e.g., sed -i, atomic writes, cat > file). Watching the directory
         // catches create events for the new file.
-        let watch_dir = config_path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .to_path_buf();
+        let watch_dir = config_path.parent().unwrap_or(Path::new(".")).to_path_buf();
 
         let (sync_tx, sync_rx) = mpsc::channel::<notify::Result<Event>>();
 
@@ -69,10 +66,7 @@ impl ConfigWatcher {
             match sync_rx.recv() {
                 Ok(Ok(event)) => {
                     // Only handle modify/create events
-                    if !matches!(
-                        event.kind,
-                        EventKind::Modify(_) | EventKind::Create(_)
-                    ) {
+                    if !matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
                         continue;
                     }
 
@@ -131,7 +125,9 @@ impl ConfigWatcher {
 }
 
 /// Async wrapper for config watching
-pub async fn watch_config_async(config_path: String) -> (broadcast::Receiver<Config>, tokio::task::JoinHandle<()>) {
+pub async fn watch_config_async(
+    config_path: String,
+) -> (broadcast::Receiver<Config>, tokio::task::JoinHandle<()>) {
     let (watcher, rx) = ConfigWatcher::new(&config_path);
 
     let handle = tokio::task::spawn_blocking(move || {

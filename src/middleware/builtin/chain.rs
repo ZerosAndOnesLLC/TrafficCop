@@ -50,10 +50,7 @@ mod tests {
 
         assert_eq!(chain.len(), 3);
         assert!(!chain.is_empty());
-        assert_eq!(
-            chain.middleware_names(),
-            &["rate-limit", "auth", "headers"]
-        );
+        assert_eq!(chain.middleware_names(), &["rate-limit", "auth", "headers"]);
     }
 
     #[test]

@@ -183,9 +183,9 @@ mod tests {
         let config = make_mirroring_service(
             "main-api",
             vec![
-                ("shadow-1", 100),  // Always
-                ("shadow-2", 50),   // Half
-                ("shadow-3", 0),    // Never
+                ("shadow-1", 100), // Always
+                ("shadow-2", 50),  // Half
+                ("shadow-3", 0),   // Never
             ],
         );
         let router = MirroringServiceRouter::new(&config);
@@ -209,7 +209,7 @@ mod tests {
         }
 
         assert_eq!(shadow1_count, iterations); // 100%
-        assert_eq!(shadow3_count, 0);          // 0%
+        assert_eq!(shadow3_count, 0); // 0%
 
         // shadow-2 should be ~50% (allow variance)
         let rate2 = (shadow2_count as f64 / iterations as f64) * 100.0;

@@ -2,11 +2,11 @@ use crate::config::EntryPoint;
 use crate::middleware::{AccessLogWriter, RequestContext};
 use crate::proxy::ProxyHandler;
 use crate::server::SharedState;
-use crate::tls::{try_handle_challenge, TlsAcceptor};
+use crate::tls::{TlsAcceptor, try_handle_challenge};
 use anyhow::{Context, Result};
 use http_body_util::BodyExt;
-use hyper::service::service_fn;
 use hyper::Request;
+use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as AutoBuilder;
 use rustls::server::ResolvesServerCert;
@@ -118,7 +118,8 @@ impl Listener {
         if tls_config.cert_resolver.is_some() {
             // Use SNI-based certificate resolver from shared state
             if let Some(ref resolver) = state.cert_resolver {
-                match TlsAcceptor::from_resolver(Arc::clone(resolver) as Arc<dyn ResolvesServerCert>) {
+                match TlsAcceptor::from_resolver(Arc::clone(resolver) as Arc<dyn ResolvesServerCert>)
+                {
                     Ok(acceptor) => {
                         info!("TLS enabled for entrypoint '{}' (SNI resolver)", name);
                         return Some(TokioTlsAcceptor::from(acceptor.get_config()));
@@ -198,7 +199,10 @@ impl Listener {
             tokio::spawn(async move {
                 // Check if draining - reject new connections
                 if !state.connections.connection_start() {
-                    debug!("Rejecting connection from {} - server draining", remote_addr);
+                    debug!(
+                        "Rejecting connection from {} - server draining",
+                        remote_addr
+                    );
                     return;
                 }
 
@@ -303,18 +307,15 @@ impl Listener {
                 }
                 // Check for ACME HTTP-01 challenges first (on non-TLS connections)
                 if !is_tls
-                    && let Some(response) =
-                        try_handle_challenge(&req, &state.acme_challenges).await
-                    {
-                        // Convert Full<Bytes> to BoxBody
-                        let boxed = response.map(|body| {
-                            body.map_err(|_: std::convert::Infallible| {
-                                unreachable!("Infallible error")
-                            })
+                    && let Some(response) = try_handle_challenge(&req, &state.acme_challenges).await
+                {
+                    // Convert Full<Bytes> to BoxBody
+                    let boxed = response.map(|body| {
+                        body.map_err(|_: std::convert::Infallible| unreachable!("Infallible error"))
                             .boxed()
-                        });
-                        return Ok(boxed);
-                    }
+                    });
+                    return Ok(boxed);
+                }
 
                 // Inject request context for middleware (remote_addr, is_tls)
                 req.extensions_mut().insert(RequestContext {
@@ -329,7 +330,17 @@ impl Listener {
                 let passive_health = Arc::clone(&state.passive_health);
 
                 proxy
-                    .handle(req, remote_addr, &ep, &router, &services, &middlewares, &passive_health, is_tls, &access_log)
+                    .handle(
+                        req,
+                        remote_addr,
+                        &ep,
+                        &router,
+                        &services,
+                        &middlewares,
+                        &passive_health,
+                        is_tls,
+                        &access_log,
+                    )
                     .await
             }
         });

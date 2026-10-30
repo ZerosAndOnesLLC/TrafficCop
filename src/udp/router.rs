@@ -49,10 +49,7 @@ impl UdpRule {
 
         // ClientIP rule
         if let Some(ips) = Self::extract_clientip(rule) {
-            let networks: Vec<IpNetwork> = ips
-                .iter()
-                .filter_map(|ip| ip.parse().ok())
-                .collect();
+            let networks: Vec<IpNetwork> = ips.iter().filter_map(|ip| ip.parse().ok()).collect();
             if !networks.is_empty() {
                 return UdpRule::ClientIP(networks);
             }
@@ -74,14 +71,15 @@ impl UdpRule {
             .split(',')
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
-            .map(|s| s.trim_matches('`').trim_matches('\'').trim_matches('"').to_string())
+            .map(|s| {
+                s.trim_matches('`')
+                    .trim_matches('\'')
+                    .trim_matches('"')
+                    .to_string()
+            })
             .collect();
 
-        if ips.is_empty() {
-            None
-        } else {
-            Some(ips)
-        }
+        if ips.is_empty() { None } else { Some(ips) }
     }
 
     /// Check if a datagram matches this rule

@@ -1,9 +1,8 @@
 use crate::config::HeadersConfig;
 use hyper::header::{
-    HeaderValue, ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS,
-    ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS,
-    ACCESS_CONTROL_MAX_AGE, ACCESS_CONTROL_REQUEST_HEADERS, ACCESS_CONTROL_REQUEST_METHOD, ORIGIN,
-    VARY,
+    ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS,
+    ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, ACCESS_CONTROL_MAX_AGE,
+    ACCESS_CONTROL_REQUEST_HEADERS, ACCESS_CONTROL_REQUEST_METHOD, HeaderValue, ORIGIN, VARY,
 };
 use hyper::{HeaderMap, Method, Request, Response, StatusCode};
 
@@ -97,23 +96,25 @@ impl CorsMiddleware {
         // Check requested method
         if let Some(method) = req.headers().get(ACCESS_CONTROL_REQUEST_METHOD)
             && let Ok(method_str) = method.to_str()
-                && !self.allowed_methods.contains(method_str) {
-                    return false;
-                }
+            && !self.allowed_methods.contains(method_str)
+        {
+            return false;
+        }
 
         // Check requested headers
         if let Some(headers) = req.headers().get(ACCESS_CONTROL_REQUEST_HEADERS)
-            && let Ok(headers_str) = headers.to_str() {
-                for header in headers_str.split(',') {
-                    let header = header.trim().to_lowercase();
-                    if !self.allowed_headers_set.contains(&header) {
-                        // Allow simple headers always
-                        if !is_simple_header(&header) {
-                            return false;
-                        }
+            && let Ok(headers_str) = headers.to_str()
+        {
+            for header in headers_str.split(',') {
+                let header = header.trim().to_lowercase();
+                if !self.allowed_headers_set.contains(&header) {
+                    // Allow simple headers always
+                    if !is_simple_header(&header) {
+                        return false;
                     }
                 }
             }
+        }
 
         true
     }
@@ -206,9 +207,10 @@ impl CorsMiddleware {
 
         // Set exposed headers
         if let Some(ref exposed) = self.exposed_headers
-            && let Ok(val) = HeaderValue::from_str(exposed) {
-                headers.insert(ACCESS_CONTROL_EXPOSE_HEADERS, val);
-            }
+            && let Ok(val) = HeaderValue::from_str(exposed)
+        {
+            headers.insert(ACCESS_CONTROL_EXPOSE_HEADERS, val);
+        }
 
         // Add Vary header
         if self.add_vary_header {
@@ -305,10 +307,12 @@ mod tests {
 
         let response = cors.handle_preflight(&req).unwrap();
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
-        assert!(response
-            .headers()
-            .get(ACCESS_CONTROL_ALLOW_ORIGIN)
-            .is_some());
+        assert!(
+            response
+                .headers()
+                .get(ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_some()
+        );
     }
 
     #[test]
@@ -327,15 +331,14 @@ mod tests {
         let response = cors.handle_preflight(&req).unwrap();
 
         // When credentials are enabled, origin must be specific, not wildcard
-        let origin = response
-            .headers()
-            .get(ACCESS_CONTROL_ALLOW_ORIGIN)
-            .unwrap();
+        let origin = response.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN).unwrap();
         assert_eq!(origin, "https://example.com");
 
-        assert!(response
-            .headers()
-            .get(ACCESS_CONTROL_ALLOW_CREDENTIALS)
-            .is_some());
+        assert!(
+            response
+                .headers()
+                .get(ACCESS_CONTROL_ALLOW_CREDENTIALS)
+                .is_some()
+        );
     }
 }

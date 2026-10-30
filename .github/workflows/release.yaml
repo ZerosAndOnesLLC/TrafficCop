@@ -1,36 +1,67 @@
 name: Release
 
+# Full release builds run only when a GitHub release is published
+# (`gh release create v<version> --generate-notes`). `gh release create` makes
+# the tag, so there is no separate tag trigger (it would build twice).
+# workflow_dispatch re-runs the build for an existing release.
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to (re)build, e.g. v1.5.0
+        required: true
 
 permissions:
   contents: write
 
+# Release runs are never cancelled; a second run for the same tag waits.
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  CARGO_TERM_COLOR: always
+
 jobs:
   build:
+    name: Build (${{ matrix.target }})
     strategy:
+      fail-fast: false
       matrix:
         include:
+          # x64 on our persistent self-hosted runners (release-only, never
+          # runs fork PR code).
           - target: x86_64-unknown-linux-gnu
-            runner: [self-hosted, Linux, X64]
+            runner: [self-hosted, Linux, X64, zo-local]
+            self_hosted: true
+          # arm64 on the GitHub-hosted ARM runner.
           - target: aarch64-unknown-linux-gnu
-            runner: [self-hosted, Linux, ARM64]
+            runner: ubuntu-24.04-arm
+            self_hosted: false
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
 
-      - name: Install Rust toolchain
-        run: |
-          if ! command -v rustup &> /dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            source "$HOME/.cargo/env"
-          fi
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-          rustup update stable
-          rustup default stable
-          rustup target add ${{ matrix.target }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Self-hosted: persistent target dir on the runner (the checkout's
+      # `git clean` would wipe ./target). Hosted: the Actions cache.
+      - name: Persistent target dir
+        if: matrix.self_hosted
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/trafficcop-ci/target-release" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ !matrix.self_hosted }}
+        with:
+          key: release-${{ matrix.target }}
 
       - name: Build release
         run: cargo build --release --target ${{ matrix.target }}
@@ -38,15 +69,15 @@ jobs:
       - name: Package binary
         run: |
           BINARY_NAME="trafficcop"
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${TAG#v}"
           ARCHIVE_NAME="${BINARY_NAME}-${VERSION}-${{ matrix.target }}"
           mkdir -p "${ARCHIVE_NAME}"
-          cp target/${{ matrix.target }}/release/trafficcop "${ARCHIVE_NAME}/${BINARY_NAME}"
+          cp "${CARGO_TARGET_DIR:-target}/${{ matrix.target }}/release/trafficcop" "${ARCHIVE_NAME}/${BINARY_NAME}"
           tar czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
           sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.target }}
           path: |
@@ -54,24 +85,29 @@ jobs:
             *.sha256
 
   release:
+    name: Upload to release
     needs: build
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux, X64, zo-local]
+    timeout-minutes: 15
     steps:
+      # No checkout here, so clear what a previous run left in the workspace.
+      - name: Clean workspace
+        run: rm -rf dist
+
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
+          path: dist
           merge-multiple: true
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            *.tar.gz
-            *.sha256
+      # The release already exists (it triggered this run); attach the files.
+      - name: Upload assets to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/*.tar.gz dist/*.sha256 --clobber --repo "${{ github.repository }}"
 
       - name: Clean up old releases
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const { data: releases } = await github.rest.repos.listReleases({

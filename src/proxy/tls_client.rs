@@ -4,8 +4,8 @@
 //! not validated (insecureSkipVerify), matching the permissive mode used for
 //! the HTTP client pool. Separate so the WebSocket path can dial TLS upstreams.
 
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::ClientConfig;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use std::sync::Arc;
 use tokio_rustls::TlsConnector;
 

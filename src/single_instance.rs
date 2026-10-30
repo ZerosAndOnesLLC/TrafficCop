@@ -123,7 +123,11 @@ mod tests {
     use std::path::PathBuf;
 
     fn tmp_lock(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("trafficcop-test-{}-{}.lock", name, std::process::id()))
+        std::env::temp_dir().join(format!(
+            "trafficcop-test-{}-{}.lock",
+            name,
+            std::process::id()
+        ))
     }
 
     #[test]

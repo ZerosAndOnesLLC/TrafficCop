@@ -812,6 +812,17 @@ docker run -d \
   trafficcop
 ```
 
+## CI & Releases
+
+- **Pull requests** run checks only (`.github/workflows/security.yml`): `cargo fmt --check`, `cargo clippy --all-targets` with `-D warnings`, `cargo test --lib`, `cargo audit` and `cargo deny`. They run on GitHub-hosted runners. A weekly schedule re-runs only `cargo audit` and `cargo deny`.
+- **Releases** run full builds (`.github/workflows/release.yaml`). Cut one with:
+
+  ```bash
+  gh release create v<version> --generate-notes
+  ```
+
+  Publishing the release builds `x86_64-unknown-linux-gnu` on the self-hosted `zo-local` runners and `aarch64-unknown-linux-gnu` on GitHub-hosted `ubuntu-24.04-arm`. The tarballs and `.sha256` files are uploaded to that release, and only the 10 newest releases are kept. To rebuild an existing release, run the workflow manually with its tag.
+
 ## Project Structure
 
 ```

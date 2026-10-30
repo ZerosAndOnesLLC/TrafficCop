@@ -1,5 +1,5 @@
 use crate::config::JwtConfig;
-use hyper::header::{HeaderMap, HeaderName, HeaderValue, COOKIE};
+use hyper::header::{COOKIE, HeaderMap, HeaderName, HeaderValue};
 use hyper::{Request, Response, StatusCode};
 use std::collections::HashMap;
 
@@ -41,7 +41,10 @@ impl JwtMiddleware {
             "HS384" => JwtAlgorithm::HS384,
             "HS512" => JwtAlgorithm::HS512,
             _ => {
-                tracing::warn!("Unsupported JWT algorithm: {}. Only HMAC algorithms (HS256, HS384, HS512) are currently supported", config.algorithm);
+                tracing::warn!(
+                    "Unsupported JWT algorithm: {}. Only HMAC algorithms (HS256, HS384, HS512) are currently supported",
+                    config.algorithm
+                );
                 return None;
             }
         };
@@ -49,7 +52,9 @@ impl JwtMiddleware {
         let secret = match config.secret {
             Some(s) => s,
             None => {
-                tracing::warn!("JWT middleware requires a secret for HMAC algorithms; middleware disabled");
+                tracing::warn!(
+                    "JWT middleware requires a secret for HMAC algorithms; middleware disabled"
+                );
                 return None;
             }
         };
@@ -79,9 +84,13 @@ impl JwtMiddleware {
 
     /// Validate JWT from request
     /// Returns Ok with claims to forward as headers, or Err with status and message
-    pub fn validate<B>(&self, req: &Request<B>) -> Result<JwtValidationResult, (StatusCode, String)> {
+    pub fn validate<B>(
+        &self,
+        req: &Request<B>,
+    ) -> Result<JwtValidationResult, (StatusCode, String)> {
         // Try to extract token from various sources
-        let token = self.extract_token(req)
+        let token = self
+            .extract_token(req)
             .ok_or((StatusCode::UNAUTHORIZED, "No JWT token found".to_string()))?;
 
         // Parse and validate the token
@@ -100,9 +109,10 @@ impl JwtMiddleware {
                 };
 
                 if let Ok(header) = HeaderName::try_from(header_name.as_str())
-                    && let Ok(val) = HeaderValue::from_str(&value_str) {
-                        headers_to_add.insert(header, val);
-                    }
+                    && let Ok(val) = HeaderValue::from_str(&value_str)
+                {
+                    headers_to_add.insert(header, val);
+                }
             }
         }
 
@@ -118,41 +128,49 @@ impl JwtMiddleware {
         // Try header first
         if let Some(auth) = req.headers().get(&self.header_name)
             && let Ok(auth_str) = auth.to_str()
-                && auth_str.starts_with(&self.header_prefix) {
-                    return Some(auth_str[self.header_prefix.len()..].to_string());
-                }
+            && auth_str.starts_with(&self.header_prefix)
+        {
+            return Some(auth_str[self.header_prefix.len()..].to_string());
+        }
 
         // Try query parameter
         if let Some(ref param) = self.query_param
-            && let Some(query) = req.uri().query() {
-                for pair in query.split('&') {
-                    let mut parts = pair.splitn(2, '=');
-                    if let (Some(key), Some(value)) = (parts.next(), parts.next())
-                        && key == param {
-                            return Some(value.to_string());
-                        }
+            && let Some(query) = req.uri().query()
+        {
+            for pair in query.split('&') {
+                let mut parts = pair.splitn(2, '=');
+                if let (Some(key), Some(value)) = (parts.next(), parts.next())
+                    && key == param
+                {
+                    return Some(value.to_string());
                 }
             }
+        }
 
         // Try cookie
         if let Some(ref cookie_name) = self.cookie_name
             && let Some(cookie_header) = req.headers().get(COOKIE)
-                && let Ok(cookies) = cookie_header.to_str() {
-                    for cookie in cookies.split(';') {
-                        let cookie = cookie.trim();
-                        let mut parts = cookie.splitn(2, '=');
-                        if let (Some(name), Some(value)) = (parts.next(), parts.next())
-                            && name.trim() == cookie_name {
-                                return Some(value.to_string());
-                            }
-                    }
+            && let Ok(cookies) = cookie_header.to_str()
+        {
+            for cookie in cookies.split(';') {
+                let cookie = cookie.trim();
+                let mut parts = cookie.splitn(2, '=');
+                if let (Some(name), Some(value)) = (parts.next(), parts.next())
+                    && name.trim() == cookie_name
+                {
+                    return Some(value.to_string());
                 }
+            }
+        }
 
         None
     }
 
     /// Validate the JWT token
-    fn validate_token(&self, token: &str) -> Result<HashMap<String, ClaimValue>, (StatusCode, String)> {
+    fn validate_token(
+        &self,
+        token: &str,
+    ) -> Result<HashMap<String, ClaimValue>, (StatusCode, String)> {
         // Split token into parts
         let parts: Vec<&str> = token.split('.').collect();
         if parts.len() != 3 {
@@ -164,8 +182,10 @@ impl JwtMiddleware {
         let signature_b64 = parts[2];
 
         // Decode header
-        let header_json = base64_url_decode(header_b64)
-            .ok_or((StatusCode::UNAUTHORIZED, "Invalid JWT header encoding".to_string()))?;
+        let header_json = base64_url_decode(header_b64).ok_or((
+            StatusCode::UNAUTHORIZED,
+            "Invalid JWT header encoding".to_string(),
+        ))?;
         let header: JwtHeader = parse_json_object(&header_json)
             .ok_or((StatusCode::UNAUTHORIZED, "Invalid JWT header".to_string()))?;
 
@@ -175,7 +195,12 @@ impl JwtMiddleware {
             "HS256" => JwtAlgorithm::HS256,
             "HS384" => JwtAlgorithm::HS384,
             "HS512" => JwtAlgorithm::HS512,
-            _ => return Err((StatusCode::UNAUTHORIZED, format!("Unsupported algorithm: {}", header.alg))),
+            _ => {
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    format!("Unsupported algorithm: {}", header.alg),
+                ));
+            }
         };
 
         if token_alg != self.algorithm {
@@ -185,16 +210,20 @@ impl JwtMiddleware {
         // Verify signature (ring's hmac::verify is constant-time)
         {
             let message = format!("{}.{}", header_b64, payload_b64);
-            let actual_sig = base64_url_decode_bytes(signature_b64)
-                .ok_or((StatusCode::UNAUTHORIZED, "Invalid signature encoding".to_string()))?;
+            let actual_sig = base64_url_decode_bytes(signature_b64).ok_or((
+                StatusCode::UNAUTHORIZED,
+                "Invalid signature encoding".to_string(),
+            ))?;
 
             ring::hmac::verify(&self.hmac_key, message.as_bytes(), &actual_sig)
                 .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid signature".to_string()))?;
         }
 
         // Decode payload
-        let payload_json = base64_url_decode(payload_b64)
-            .ok_or((StatusCode::UNAUTHORIZED, "Invalid JWT payload encoding".to_string()))?;
+        let payload_json = base64_url_decode(payload_b64).ok_or((
+            StatusCode::UNAUTHORIZED,
+            "Invalid JWT payload encoding".to_string(),
+        ))?;
         let claims = parse_claims(&payload_json)
             .ok_or((StatusCode::UNAUTHORIZED, "Invalid JWT claims".to_string()))?;
 
@@ -207,15 +236,17 @@ impl JwtMiddleware {
 
         // Check expiration
         if let Some(ClaimValue::Number(exp)) = claims.get("exp")
-            && *exp < now {
-                return Err((StatusCode::UNAUTHORIZED, "Token expired".to_string()));
-            }
+            && *exp < now
+        {
+            return Err((StatusCode::UNAUTHORIZED, "Token expired".to_string()));
+        }
 
         // Check not before
         if let Some(ClaimValue::Number(nbf)) = claims.get("nbf")
-            && *nbf > now {
-                return Err((StatusCode::UNAUTHORIZED, "Token not yet valid".to_string()));
-            }
+            && *nbf > now
+        {
+            return Err((StatusCode::UNAUTHORIZED, "Token not yet valid".to_string()));
+        }
 
         // Check issuer
         if let Some(ref expected_iss) = self.issuer {
@@ -328,7 +359,10 @@ fn parse_json_object(json: &str) -> Option<JwtHeader> {
     let obj = value.as_object()?;
     Some(JwtHeader {
         alg: obj.get("alg")?.as_str()?.to_string(),
-        typ: obj.get("typ").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        typ: obj
+            .get("typ")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
     })
 }
 
@@ -353,7 +387,10 @@ fn json_value_to_claim(value: serde_json::Value) -> ClaimValue {
         serde_json::Value::Bool(b) => ClaimValue::Bool(b),
         serde_json::Value::Number(n) => {
             // Timestamps issued as floats (some libraries do) truncate to seconds.
-            ClaimValue::Number(n.as_i64().unwrap_or_else(|| n.as_f64().unwrap_or(0.0) as i64))
+            ClaimValue::Number(
+                n.as_i64()
+                    .unwrap_or_else(|| n.as_f64().unwrap_or(0.0) as i64),
+            )
         }
         serde_json::Value::String(s) => ClaimValue::String(s),
         serde_json::Value::Array(items) => ClaimValue::Array(
@@ -431,7 +468,9 @@ mod tests {
     fn test_escaped_string_claims_parse() {
         let json = r#"{"name":"John \"JD\" Doe","path":"a,b}c","n":-5}"#;
         let claims = parse_claims(json).unwrap();
-        assert!(matches!(claims.get("name"), Some(ClaimValue::String(s)) if s == r#"John "JD" Doe"#));
+        assert!(
+            matches!(claims.get("name"), Some(ClaimValue::String(s)) if s == r#"John "JD" Doe"#)
+        );
         assert!(matches!(claims.get("path"), Some(ClaimValue::String(s)) if s == "a,b}c"));
         assert!(matches!(claims.get("n"), Some(ClaimValue::Number(-5))));
     }
@@ -468,7 +507,10 @@ mod tests {
 
         assert!(matches!(claims.get("sub"), Some(ClaimValue::String(s)) if s == "1234567890"));
         assert!(matches!(claims.get("name"), Some(ClaimValue::String(s)) if s == "John Doe"));
-        assert!(matches!(claims.get("iat"), Some(ClaimValue::Number(1516239022))));
+        assert!(matches!(
+            claims.get("iat"),
+            Some(ClaimValue::Number(1516239022))
+        ));
     }
 
     #[test]
@@ -516,7 +558,7 @@ mod tests {
         // (exp far in future so test doesn't expire)
         let token = create_test_jwt(
             "your-256-bit-secret",
-            r#"{"sub":"1234567890","name":"John Doe","iat":1516239022,"exp":9999999999}"#
+            r#"{"sub":"1234567890","name":"John Doe","iat":1516239022,"exp":9999999999}"#,
         );
 
         let req = Request::builder()
@@ -528,7 +570,9 @@ mod tests {
         assert!(result.is_ok());
 
         let validation = result.unwrap();
-        assert!(matches!(validation.claims.get("sub"), Some(ClaimValue::String(s)) if s == "1234567890"));
+        assert!(
+            matches!(validation.claims.get("sub"), Some(ClaimValue::String(s)) if s == "1234567890")
+        );
     }
 
     #[test]
@@ -552,7 +596,7 @@ mod tests {
         // Token with expired exp claim
         let token = create_test_jwt(
             "your-256-bit-secret",
-            r#"{"sub":"1234567890","exp":1000000000}"#
+            r#"{"sub":"1234567890","exp":1000000000}"#,
         );
 
         let req = Request::builder()
@@ -584,10 +628,7 @@ mod tests {
         let middleware = JwtMiddleware::new(config).unwrap();
 
         // Token signed with different secret
-        let token = create_test_jwt(
-            "wrong-secret",
-            r#"{"sub":"1234567890","exp":9999999999}"#
-        );
+        let token = create_test_jwt("wrong-secret", r#"{"sub":"1234567890","exp":9999999999}"#);
 
         let req = Request::builder()
             .header(AUTHORIZATION, format!("Bearer {}", token))
@@ -616,7 +657,8 @@ mod tests {
 
     /// Base64 URL encode
     fn base64_url_encode(input: &[u8]) -> String {
-        const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        const ALPHABET: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
         let mut result = String::new();
         let mut buffer = 0u32;

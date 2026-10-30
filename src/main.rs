@@ -2,14 +2,9 @@ use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
 use tracing::{error, info, warn};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use trafficcop::{
-    config::Config,
-    metrics,
-    server::Server,
-    tls::AcmeManagerBuilder,
-};
+use trafficcop::{config::Config, metrics, server::Server, tls::AcmeManagerBuilder};
 
 #[cfg(unix)]
 mod single_instance;
@@ -83,18 +78,19 @@ async fn main() -> Result<()> {
 
     // Start metrics server if configured
     if let Some(ref metrics_config) = config.metrics
-        && let Some(ref prometheus) = metrics_config.prometheus {
-            info!(
-                "Starting Prometheus metrics server on {}",
-                prometheus.address
+        && let Some(ref prometheus) = metrics_config.prometheus
+    {
+        info!(
+            "Starting Prometheus metrics server on {}",
+            prometheus.address
+        );
+        if let Err(e) = metrics::start_metrics_server(&prometheus.address) {
+            warn!(
+                "Failed to start metrics server: {}. Continuing without metrics.",
+                e
             );
-            if let Err(e) = metrics::start_metrics_server(&prometheus.address) {
-                warn!(
-                    "Failed to start metrics server: {}. Continuing without metrics.",
-                    e
-                );
-            }
         }
+    }
 
     // Initialize ACME if configured via certificatesResolvers
     let server = if let Some((resolver_name, resolver)) = config
@@ -120,13 +116,14 @@ async fn main() -> Result<()> {
         // For now, we'll collect domains from routers that use this resolver
         for router in config.routers().values() {
             if let Some(tls) = &router.tls
-                && tls.cert_resolver.as_deref() == Some(resolver_name) {
-                    for domain in &tls.domains {
-                        let mut all = vec![domain.main.clone()];
-                        all.extend(domain.sans.clone());
-                        builder = builder.domain(all);
-                    }
+                && tls.cert_resolver.as_deref() == Some(resolver_name)
+            {
+                for domain in &tls.domains {
+                    let mut all = vec![domain.main.clone()];
+                    all.extend(domain.sans.clone());
+                    builder = builder.domain(all);
                 }
+            }
         }
 
         match builder.build().await {
