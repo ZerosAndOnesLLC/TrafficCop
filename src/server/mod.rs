@@ -15,9 +15,9 @@ use crate::proxy::ProxyHandler;
 use crate::proxy::TransportRegistry;
 use crate::router::Router;
 use crate::service::ServiceManager;
-use crate::tls::{AcmeManager, CertificateResolver, PendingChallenge};
+use crate::tls::{AcmeManager, CertificateResolver, PendingChallenge, TlsOptionSet};
 use crate::udp::{UdpRouter, UdpServiceManager};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -110,24 +110,22 @@ impl Default for ConnectionTracker {
 /// Build a cert resolver from static `tls.certificates` entries in the config.
 /// Returns None when no static certs are configured; returns Some even on
 /// partial success so at least the successfully-loaded certs work.
-fn build_static_resolver(config: &Config) -> Option<Arc<CertificateResolver>> {
-    let certs = config.tls.as_ref()?.certificates.as_slice();
+/// Static certificates from `tls.certificates`. A certificate that fails to
+/// load is a startup error, never a silent downgrade.
+fn build_static_resolver(config: &Config) -> Result<Option<Arc<CertificateResolver>>> {
+    let Some(certs) = config.tls.as_ref().map(|t| t.certificates.as_slice()) else {
+        return Ok(None);
+    };
     if certs.is_empty() {
-        return None;
+        return Ok(None);
     }
-    match CertificateResolver::from_static_certs(certs) {
-        Ok(resolver) => {
-            info!(
-                "Loaded {} static TLS certificate(s) for SNI-based resolution",
-                certs.len()
-            );
-            Some(Arc::new(resolver))
-        }
-        Err(e) => {
-            error!("Failed to load static TLS certificates: {}", e);
-            None
-        }
-    }
+    let resolver =
+        CertificateResolver::from_static_certs(certs).context("loading tls.certificates")?;
+    info!(
+        "Loaded {} static TLS certificate(s) for SNI-based resolution",
+        certs.len()
+    );
+    Ok(Some(Arc::new(resolver)))
 }
 
 /// Shared state that can be hot-reloaded
@@ -140,6 +138,8 @@ pub struct SharedState {
     pub middlewares: ArcSwap<MiddlewareRegistry>,
     /// Backend transports (serversTransports), hot-swappable.
     pub transports: ArcSwap<TransportRegistry>,
+    /// Per-entrypoint TLS options selected by SNI, hot-swappable.
+    pub tls_options: ArcSwap<TlsOptionSet>,
     /// Passive health checker shared across all request paths.
     pub passive_health: Arc<PassiveHealthChecker>,
     /// Tracks active connections for graceful drain.
@@ -155,8 +155,9 @@ pub struct SharedState {
 impl SharedState {
     /// Build shared state from config without ACME support.
     pub fn new(config: &Config) -> Result<Self> {
-        let cert_resolver = build_static_resolver(config);
+        let cert_resolver = build_static_resolver(config)?;
         Ok(Self {
+            tls_options: ArcSwap::from_pointee(TlsOptionSet::build(config, cert_resolver.clone())?),
             router: ArcSwap::from_pointee(Router::from_config(config)),
             services: ArcSwap::from_pointee(ServiceManager::new(config)),
             middlewares: ArcSwap::from_pointee(
@@ -174,7 +175,9 @@ impl SharedState {
 
     /// Create with ACME manager
     pub fn with_acme(config: &Config, acme_manager: &AcmeManager) -> Result<Self> {
+        let cert_resolver = Some(acme_manager.get_resolver());
         Ok(Self {
+            tls_options: ArcSwap::from_pointee(TlsOptionSet::build(config, cert_resolver.clone())?),
             router: ArcSwap::from_pointee(Router::from_config(config)),
             services: ArcSwap::from_pointee(ServiceManager::new(config)),
             middlewares: ArcSwap::from_pointee(
@@ -185,7 +188,7 @@ impl SharedState {
             passive_health: Arc::new(PassiveHealthChecker::new(PassiveHealthConfig::default())),
             connections: ConnectionTracker::new(),
             acme_challenges: acme_manager.get_pending_challenges(),
-            cert_resolver: Some(acme_manager.get_resolver()),
+            cert_resolver,
             access_log: AccessLogWriter::new(&config.access_log),
         })
     }
@@ -196,6 +199,7 @@ impl SharedState {
         let new_middlewares =
             MiddlewareRegistry::from_config(config.middlewares()).map_err(anyhow::Error::msg)?;
         let new_transports = TransportRegistry::from_config(config, Some(&self.transports.load()))?;
+        let new_tls = TlsOptionSet::build(config, self.cert_resolver.clone())?;
         let new_router = Router::from_config(config);
         let new_services = ServiceManager::new(config);
 
@@ -203,6 +207,7 @@ impl SharedState {
         self.services.store(Arc::new(new_services));
         self.middlewares.store(Arc::new(new_middlewares));
         self.transports.store(Arc::new(new_transports));
+        self.tls_options.store(Arc::new(new_tls));
 
         info!("Router, services, and middlewares reloaded");
         Ok(())

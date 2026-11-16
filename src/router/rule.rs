@@ -149,6 +149,20 @@ impl Rule {
 }
 
 impl Rule {
+    /// Every `Host()` domain in the rule (any position except under `!`).
+    /// Used to map domains to TLS options, as Traefik does.
+    pub fn all_hosts(&self) -> Vec<&str> {
+        match self {
+            Rule::Host(h) => vec![h.as_str()],
+            Rule::And(a, b) | Rule::Or(a, b) => {
+                let mut hosts = a.all_hosts();
+                hosts.extend(b.all_hosts());
+                hosts
+            }
+            _ => vec![],
+        }
+    }
+
     /// Extract host names from the rule for indexing purposes.
     /// Returns hosts only when the rule requires a specific host (Host or And containing Host).
     /// Returns empty for Or/Not/non-host rules where we can't narrow by host.

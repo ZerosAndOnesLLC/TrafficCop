@@ -169,6 +169,13 @@ impl CertificateResolver {
 
     /// Find certificate for a domain
     fn find_cert(&self, domain: &str) -> Option<Arc<CertifiedKey>> {
+        self.find_cert_exact(domain)
+            .or_else(|| self.default_cert.clone())
+    }
+
+    /// Certificate matching `domain` (static, ACME, wildcard) without falling
+    /// back to the default certificate. Used for `sniStrict`.
+    pub fn find_cert_exact(&self, domain: &str) -> Option<Arc<CertifiedKey>> {
         // 1. Check static certs (exact match)
         if let Some(cert) = self.static_certs.get(domain) {
             return Some(Arc::clone(cert));
@@ -215,8 +222,7 @@ impl CertificateResolver {
             }
         }
 
-        // 6. Return default
-        self.default_cert.clone()
+        None
     }
 
     /// Find a wildcard certificate match
@@ -244,10 +250,14 @@ impl Default for CertificateResolver {
 
 impl ResolvesServerCert for CertificateResolver {
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-        let sni = client_hello.server_name()?;
-        debug!("SNI: {}", sni);
-
-        self.find_cert(sni)
+        match client_hello.server_name() {
+            Some(sni) => {
+                debug!("SNI: {}", sni);
+                self.find_cert(sni)
+            }
+            // No SNI (e.g. IP-literal clients): serve the default certificate.
+            None => self.default_cert.clone(),
+        }
     }
 }
 
