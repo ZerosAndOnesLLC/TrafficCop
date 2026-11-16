@@ -187,7 +187,7 @@ impl MiddlewareRegistry {
         if let Some(auth_config) = &config.basic_auth {
             return Ok(Arc::new(BasicAuthWrapper {
                 name,
-                inner: BasicAuthMiddleware::new(auth_config.clone()),
+                inner: BasicAuthMiddleware::new(auth_config.clone())?,
             }));
         }
 
