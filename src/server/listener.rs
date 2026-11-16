@@ -340,6 +340,7 @@ impl Listener {
                 let router = state.router.load();
                 let services = state.services.load();
                 let middlewares = state.middlewares.load();
+                let transports = state.transports.load();
                 let passive_health = Arc::clone(&state.passive_health);
 
                 proxy
@@ -350,6 +351,7 @@ impl Listener {
                         &router,
                         &services,
                         &middlewares,
+                        &transports,
                         &passive_health,
                         is_tls,
                         &access_log,

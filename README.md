@@ -228,6 +228,40 @@ http:
           interval: "10s"
 ```
 
+### Backend TLS (serversTransports)
+
+HTTPS backends are **verified** against the system trust store (falling back to the bundled Mozilla
+roots when the host has none), exactly like Traefik. For internal CAs or self-signed backends,
+define a `serversTransport` and reference it from the service:
+
+```yaml
+http:
+  serversTransports:
+    internal:
+      rootCAs: ["/etc/trafficcop/internal-ca.pem"]   # replaces the system pool
+      serverName: api.internal                       # SNI + name to verify
+      certificates:                                   # optional client cert (mTLS to backend)
+        - certFile: /etc/trafficcop/client.pem
+          keyFile: /etc/trafficcop/client.key
+      peerCertURI: spiffe://cluster/ns/api            # optional required URI SAN
+      maxIdleConnsPerHost: 200
+      disableHTTP2: false
+      forwardingTimeouts:
+        dialTimeout: 30s
+        responseHeaderTimeout: 60s
+        idleConnTimeout: 90s
+    legacy:
+      insecureSkipVerify: true                        # explicit opt-out, logged at startup
+  services:
+    api:
+      loadBalancer:
+        serversTransport: internal
+        servers:
+          - url: "https://10.0.0.5:8443"
+```
+
+A transport named `default` replaces the built-in default for services that name none.
+
 ### Middlewares
 
 > **Not applied yet:** `compress`, `retry`, `circuitBreaker`, `errors` and `grpcWeb` are accepted

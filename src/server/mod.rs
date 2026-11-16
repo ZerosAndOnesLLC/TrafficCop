@@ -12,6 +12,7 @@ use crate::config::{Config, watch_config_async};
 use crate::health::{PassiveHealthChecker, PassiveHealthConfig};
 use crate::middleware::{AccessLogWriter, MiddlewareRegistry};
 use crate::proxy::ProxyHandler;
+use crate::proxy::TransportRegistry;
 use crate::router::Router;
 use crate::service::ServiceManager;
 use crate::tls::{AcmeManager, CertificateResolver, PendingChallenge};
@@ -137,6 +138,8 @@ pub struct SharedState {
     pub services: ArcSwap<ServiceManager>,
     /// The current middleware registry (hot-swappable).
     pub middlewares: ArcSwap<MiddlewareRegistry>,
+    /// Backend transports (serversTransports), hot-swappable.
+    pub transports: ArcSwap<TransportRegistry>,
     /// Passive health checker shared across all request paths.
     pub passive_health: Arc<PassiveHealthChecker>,
     /// Tracks active connections for graceful drain.
@@ -160,6 +163,7 @@ impl SharedState {
                 MiddlewareRegistry::from_config(config.middlewares())
                     .map_err(anyhow::Error::msg)?,
             ),
+            transports: ArcSwap::from_pointee(TransportRegistry::from_config(config, None)?),
             passive_health: Arc::new(PassiveHealthChecker::new(PassiveHealthConfig::default())),
             connections: ConnectionTracker::new(),
             acme_challenges: Arc::new(RwLock::new(HashMap::new())),
@@ -177,6 +181,7 @@ impl SharedState {
                 MiddlewareRegistry::from_config(config.middlewares())
                     .map_err(anyhow::Error::msg)?,
             ),
+            transports: ArcSwap::from_pointee(TransportRegistry::from_config(config, None)?),
             passive_health: Arc::new(PassiveHealthChecker::new(PassiveHealthConfig::default())),
             connections: ConnectionTracker::new(),
             acme_challenges: acme_manager.get_pending_challenges(),
@@ -190,12 +195,14 @@ impl SharedState {
     pub fn reload(&self, config: &Config) -> Result<()> {
         let new_middlewares =
             MiddlewareRegistry::from_config(config.middlewares()).map_err(anyhow::Error::msg)?;
+        let new_transports = TransportRegistry::from_config(config, Some(&self.transports.load()))?;
         let new_router = Router::from_config(config);
         let new_services = ServiceManager::new(config);
 
         self.router.store(Arc::new(new_router));
         self.services.store(Arc::new(new_services));
         self.middlewares.store(Arc::new(new_middlewares));
+        self.transports.store(Arc::new(new_transports));
 
         info!("Router, services, and middlewares reloaded");
         Ok(())

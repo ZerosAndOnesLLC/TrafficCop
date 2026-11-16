@@ -2866,6 +2866,7 @@ dependencies = [
  "reqwest",
  "ring",
  "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "serde_norway",
@@ -2878,6 +2879,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "webpki-root-certs",
  "x509-parser",
 ]
 

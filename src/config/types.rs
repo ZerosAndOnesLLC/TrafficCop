@@ -1229,8 +1229,8 @@ pub struct ServersTransport {
     #[serde(default)]
     pub insecure_skip_verify: bool,
 
-    /// Root CA certificate files for backend TLS.
-    #[serde(default)]
+    /// Root CA certificate files for backend TLS (replace the system pool).
+    #[serde(default, rename = "rootCAs", alias = "rootCas")]
     pub root_cas: Vec<String>,
 
     /// Client certificates for mutual TLS with backends.
@@ -1246,11 +1246,11 @@ pub struct ServersTransport {
     pub forwarding_timeouts: Option<ForwardingTimeouts>,
 
     /// Disable HTTP/2 for backend connections.
-    #[serde(default)]
+    #[serde(default, rename = "disableHTTP2", alias = "disableHttp2")]
     pub disable_http2: bool,
 
     /// URI to match in the backend peer certificate.
-    #[serde(default)]
+    #[serde(default, rename = "peerCertURI", alias = "peerCertUri")]
     pub peer_cert_uri: Option<String>,
 }
 

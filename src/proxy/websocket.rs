@@ -37,6 +37,7 @@ pub async fn handle_websocket_upgrade(
     req: Request<Incoming>,
     backend_addr: &str,
     _remote_addr: SocketAddr,
+    clients: &super::transport::BackendClients,
 ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
     // Parse backend address
     let backend_url: url::Url = match backend_addr.parse() {
@@ -70,7 +71,12 @@ pub async fn handle_websocket_upgrade(
     // sending the HTTP Upgrade request. The underlying bidirectional byte stream
     // is still just AsyncRead + AsyncWrite, so the rest of the handler is uniform.
     let mut backend_stream: Box<dyn BackendIo> = if is_tls_backend {
-        let server_name = match ServerName::try_from(host.to_string()) {
+        let server_name = match clients
+            .server_name
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(|| ServerName::try_from(host.to_string()))
+        {
             Ok(n) => n,
             Err(e) => {
                 error!(
@@ -80,7 +86,7 @@ pub async fn handle_websocket_upgrade(
                 return Ok(error_response(StatusCode::BAD_GATEWAY));
             }
         };
-        let connector = super::tls_client::insecure_connector();
+        let connector = clients.tls.clone();
         match connector.connect(server_name, tcp_stream).await {
             Ok(tls) => Box::new(tls),
             Err(e) => {
