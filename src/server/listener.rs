@@ -86,6 +86,8 @@ pub struct Listener {
     tls: bool,
     /// http.redirections.entryPoint, if configured.
     redirect: Option<Arc<EntryPointRedirect>>,
+    /// http.sanitizePath (default true).
+    sanitize_path: bool,
     forwarded_trust: Arc<ForwardedTrust>,
     max_request_body_bytes: Option<u64>,
 }
@@ -101,6 +103,11 @@ impl Listener {
         redirect: Option<EntryPointRedirect>,
     ) -> Self {
         let tls = state.tls_options.load().is_tls(&name);
+        let sanitize_path = entrypoint
+            .http
+            .as_ref()
+            .and_then(|h| h.sanitize_path)
+            .unwrap_or(true);
         let forwarded_trust = Arc::new(ForwardedTrust::from_entrypoint(&name, &entrypoint));
         let max_request_body_bytes = entrypoint
             .transport
@@ -114,6 +121,7 @@ impl Listener {
             proxy,
             tls,
             redirect: redirect.map(Arc::new),
+            sanitize_path,
             forwarded_trust,
             max_request_body_bytes,
         }
@@ -154,6 +162,7 @@ impl Listener {
             let forwarded_trust = Arc::clone(&self.forwarded_trust);
             let max_body = self.max_request_body_bytes;
             let redirect = self.redirect.clone();
+            let sanitize_path = self.sanitize_path;
 
             tokio::spawn(async move {
                 // Check if draining - reject new connections
@@ -215,6 +224,7 @@ impl Listener {
                                 forwarded_trust,
                                 max_body,
                                 redirect,
+                                sanitize_path,
                             )
                             .await;
                         }
@@ -237,6 +247,7 @@ impl Listener {
                         forwarded_trust,
                         max_body,
                         redirect,
+                        sanitize_path,
                     )
                     .await;
                 }
@@ -260,6 +271,7 @@ impl Listener {
         forwarded_trust: Arc<ForwardedTrust>,
         max_body: Option<u64>,
         redirect: Option<Arc<EntryPointRedirect>>,
+        sanitize_path: bool,
     ) where
         I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
     {
@@ -313,6 +325,37 @@ impl Listener {
                     let headers = req.headers_mut();
                     for header in FORWARDED_HEADERS {
                         headers.remove(header);
+                    }
+                }
+
+                // Normalize the path before anything routes on it (Traefik
+                // sanitizePath): /%61dmin, /a/../admin and //admin all become
+                // /admin for routing, middlewares and the backend alike.
+                if sanitize_path && let Some(clean) = crate::proxy::path::sanitize(req.uri().path())
+                {
+                    let mut parts = req.uri().clone().into_parts();
+                    let pq = match req.uri().query() {
+                        Some(q) => format!("{clean}?{q}"),
+                        None => clean,
+                    };
+                    match pq.parse() {
+                        Ok(pq) => {
+                            parts.path_and_query = Some(pq);
+                            if let Ok(uri) = hyper::Uri::from_parts(parts) {
+                                *req.uri_mut() = uri;
+                            }
+                        }
+                        Err(_) => {
+                            let body = http_body_util::Full::new(bytes::Bytes::from_static(
+                                b"Bad Request",
+                            ))
+                            .map_err(|_: std::convert::Infallible| unreachable!("Infallible error"))
+                            .boxed();
+                            return Ok(hyper::Response::builder()
+                                .status(hyper::StatusCode::BAD_REQUEST)
+                                .body(body)
+                                .unwrap());
+                        }
                     }
                 }
 

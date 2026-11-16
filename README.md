@@ -414,6 +414,12 @@ entryPoints:
 
 ACME HTTP-01 challenges are still answered on a redirecting entrypoint.
 
+**Path sanitization** (`http.sanitizePath`, default `true`, as in Traefik): before routing, the
+request path is percent-decoded, dot-segments and duplicate slashes are removed, and the result is
+re-encoded canonically. `/%61dmin`, `/public/../admin` and `//admin` all route — and reach the
+backend — as `/admin`. Rules always match the decoded path. Set `sanitizePath: false` on the
+entrypoint's `http` block to forward paths untouched.
+
 ### Entrypoint Security Options (v1.5.0)
 
 ```yaml

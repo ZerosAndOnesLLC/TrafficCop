@@ -5,6 +5,8 @@ pub mod grpc;
 mod handler;
 /// HTTP/2 connection pooling for upstream backends.
 pub mod http2_client;
+/// Request path decoding and sanitization (Traefik sanitizePath).
+pub mod path;
 /// Backend transports (serversTransports) and verified TLS client config.
 pub mod transport;
 /// WebSocket upgrade detection and bidirectional proxying.

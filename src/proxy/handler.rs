@@ -65,7 +65,9 @@ impl ProxyHandler {
             .or(host_from_uri.as_deref());
 
         // Use references directly - no allocations
-        let path = req.uri().path();
+        // Rules match the percent-decoded path (Go/Traefik semantics).
+        let decoded_path = super::path::decode(req.uri().path());
+        let path: &str = &decoded_path;
         let query = req.uri().query();
         let method = req.method();
 

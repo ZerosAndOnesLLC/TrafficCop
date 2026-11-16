@@ -751,6 +751,11 @@ pub struct EntryPointHttp {
     /// Default middlewares applied to all routers on this entry point.
     #[serde(default)]
     pub middlewares: Vec<String>,
+
+    /// Clean the request path (dot-segments, duplicate slashes, unneeded
+    /// percent-encoding) before routing. Default: true (Traefik default).
+    #[serde(default)]
+    pub sanitize_path: Option<bool>,
 }
 
 /// Entrypoint-level HTTP redirections (e.g., HTTP to HTTPS).
