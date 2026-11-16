@@ -16,7 +16,7 @@ use crate::proxy::TransportRegistry;
 use crate::router::Router;
 use crate::service::ServiceManager;
 use crate::tls::{AcmeManager, CertificateResolver, PendingChallenge, TlsOptionSet};
-use crate::udp::{UdpRouter, UdpServiceManager};
+use crate::udp::{UdpMiddlewares, UdpRouter, UdpServiceManager};
 use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
 use std::collections::HashMap;
@@ -301,8 +301,12 @@ impl Server {
 
         // Start UDP listeners if UDP config is present
         if config.has_udp() {
-            let udp_router = Arc::new(UdpRouter::from_config(&config));
+            let udp_router = Arc::new(UdpRouter::from_config(&config).map_err(anyhow::Error::msg)?);
             let udp_services = Arc::new(UdpServiceManager::new(&config));
+            let udp_middlewares = Arc::new(
+                UdpMiddlewares::from_config(config.udp_middlewares())
+                    .map_err(anyhow::Error::msg)?,
+            );
 
             // Find entrypoints that have UDP routers
             for (name, entrypoint) in entrypoints {
@@ -315,6 +319,7 @@ impl Server {
                         entrypoint,
                         Arc::clone(&udp_router),
                         Arc::clone(&udp_services),
+                        Arc::clone(&udp_middlewares),
                     );
 
                     let listener_name = name.clone();

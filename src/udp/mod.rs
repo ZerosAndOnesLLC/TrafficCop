@@ -1,9 +1,12 @@
 //! UDP proxying: session-aware datagram forwarding with client IP routing and load balancing.
 
+mod middleware;
 mod proxy;
 mod router;
 mod service;
 
+/// UDP middlewares (ipAllowList, ipDenyList, rateLimit).
+pub use middleware::UdpMiddlewares;
 /// Session-aware UDP proxy that forwards datagrams and tracks client sessions.
 pub use proxy::UdpProxy;
 /// Matches UDP datagrams to routes by client IP.

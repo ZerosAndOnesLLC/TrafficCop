@@ -513,9 +513,16 @@ tcp:
 
 | Rule | Description | Example |
 |------|-------------|---------|
-| `*` | Catch-all | `rule: "*"` |
-| `HostSNI` | TLS SNI hostname | `HostSNI(\`db.example.com\`)` |
+| `*` / `HostSNI(\`*\`)` | Catch-all (TLS or not) | `rule: "HostSNI(\`*\`)"` |
+| `HostSNI` | TLS SNI hostname (`*.example.com` wildcards allowed) | `HostSNI(\`db.example.com\`)` |
+| `HostSNIRegexp` | TLS SNI regex | `HostSNIRegexp(\`^db-[0-9]+\\.example\\.com$\`)` |
 | `ClientIP` | Client IP/CIDR | `ClientIP(\`10.0.0.0/8\`)` |
+| `ALPN` | ALPN protocol offered by the client | `ALPN(\`postgresql\`)` |
+
+Combine with `&&`, `||`, `!` and parentheses, e.g. `HostSNI(\`*\`) && ClientIP(\`10.0.0.0/8\`)`.
+Rules are parsed strictly: an invalid rule (or invalid CIDR) is a configuration error, never a
+catch-all. Priority follows Traefik (default = rule length, ties by router name). TCP middlewares
+(`ipAllowList`, `ipDenyList`, `inFlightConn`) are enforced when the connection is accepted.
 
 ### UDP Configuration (v0.12.0)
 
@@ -604,8 +611,11 @@ udp:
 
 | Rule | Description | Example |
 |------|-------------|---------|
-| `*` | Catch-all | `rule: "*"` |
-| `ClientIP` | Client IP/CIDR | `ClientIP(\`10.0.0.0/8\`)` |
+| (omitted) / `*` | Catch-all — Traefik UDP routers have no rule | `rule: "*"` |
+| `ClientIP` | Client IP/CIDR (TrafficCop extension; `&&`, `||`, `!` supported) | `ClientIP(\`10.0.0.0/8\`)` |
+
+UDP middlewares (`ipAllowList`, `ipDenyList`, `rateLimit`; TrafficCop extensions) are applied to
+every datagram. Invalid rules or CIDRs are configuration errors.
 
 Note: UDP does not support SNI-based routing since there is no TLS handshake for connection-less protocols.
 

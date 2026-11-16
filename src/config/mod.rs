@@ -208,6 +208,15 @@ impl Config {
         crate::middleware::MiddlewareRegistry::from_config(self.middlewares())
             .map_err(anyhow::Error::msg)?;
 
+        // TCP/UDP rules and middlewares must parse/build (never fall back to
+        // catch-all or skip a middleware).
+        crate::tcp::TcpRouter::from_config(self).map_err(anyhow::Error::msg)?;
+        crate::tcp::TcpMiddlewares::from_config(self.tcp_middlewares())
+            .map_err(anyhow::Error::msg)?;
+        crate::udp::UdpRouter::from_config(self).map_err(anyhow::Error::msg)?;
+        crate::udp::UdpMiddlewares::from_config(self.udp_middlewares())
+            .map_err(anyhow::Error::msg)?;
+
         // Validate routers reference valid services
         for (name, router) in self.routers() {
             if !self.services().contains_key(&router.service) {

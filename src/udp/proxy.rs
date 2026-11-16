@@ -1,3 +1,4 @@
+use super::middleware::UdpMiddlewares;
 use crate::udp::{UdpRouter, UdpServiceManager};
 use dashmap::DashMap;
 use std::collections::hash_map::DefaultHasher;
@@ -28,6 +29,7 @@ const MAX_CONCURRENT_DATAGRAMS: usize = 1024;
 pub struct UdpProxy {
     router: Arc<UdpRouter>,
     services: Arc<UdpServiceManager>,
+    middlewares: Arc<UdpMiddlewares>,
     /// Session tracking: maps client addr -> backend info
     sessions: Arc<DashMap<SocketAddr, UdpSession>>,
     /// Session timeout
@@ -53,14 +55,21 @@ struct UdpSession {
     last_activity: Instant,
     /// Socket bound to ephemeral port for this session (for receiving responses)
     backend_socket: Arc<UdpSocket>,
+    /// Route middlewares, re-applied to every datagram (rate limits).
+    middlewares: Arc<[String]>,
 }
 
 impl UdpProxy {
     /// Create a new UDP proxy
-    pub fn new(router: Arc<UdpRouter>, services: Arc<UdpServiceManager>) -> Self {
+    pub fn new(
+        router: Arc<UdpRouter>,
+        services: Arc<UdpServiceManager>,
+        middlewares: Arc<UdpMiddlewares>,
+    ) -> Self {
         Self {
             router,
             services,
+            middlewares,
             sessions: Arc::new(DashMap::new()),
             session_timeout: DEFAULT_SESSION_TIMEOUT,
             datagram_permits: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_DATAGRAMS)),
@@ -180,7 +189,14 @@ impl UdpProxy {
             // Forward to existing backend
             let backend_socket = Arc::clone(&session.backend_socket);
             let backend_addr = session.backend_addr;
+            let mws = Arc::clone(&session.middlewares);
             drop(session); // Release lock
+
+            if let Err(reason) = self.middlewares.admit(&mws, client_addr.ip()) {
+                debug!("UDP: Dropping datagram from {}: {}", client_addr, reason);
+                self.packets_dropped.fetch_add(1, Ordering::Relaxed);
+                return Ok(());
+            }
 
             self.forward_to_backend(client_addr, &backend_socket, backend_addr, &data)
                 .await?;
@@ -199,6 +215,12 @@ impl UdpProxy {
                 return Ok(());
             }
         };
+
+        if let Err(reason) = self.middlewares.admit(&route.middlewares, client_addr.ip()) {
+            debug!("UDP: Dropping datagram from {}: {}", client_addr, reason);
+            self.packets_dropped.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
 
         // Get the backend service
         let service = match self.services.get_service(&route.service) {
@@ -242,6 +264,7 @@ impl UdpProxy {
             service_name: route.service.clone(),
             last_activity: Instant::now(),
             backend_socket: Arc::clone(&backend_socket),
+            middlewares: route.middlewares.clone().into(),
         };
         self.sessions.insert(client_addr, session);
 

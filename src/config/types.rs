@@ -388,8 +388,9 @@ pub struct UdpRouter {
     #[serde(default)]
     pub entry_points: Vec<String>,
 
-    /// Routing rule (ClientIP or catch-all `*`)
-    /// Note: UDP doesn't support SNI since there's no TLS handshake
+    /// Routing rule (TrafficCop extension: ClientIP or `*`). Traefik UDP
+    /// routers have no rule; when omitted the router matches every datagram.
+    #[serde(default)]
     pub rule: String,
 
     /// Service to route to

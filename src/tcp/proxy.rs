@@ -1,3 +1,5 @@
+use super::middleware::TcpMiddlewares;
+use super::rule::ConnInfo;
 use crate::tcp::{TcpRouter, TcpServiceManager};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -13,16 +15,52 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout for reading SNI from TLS ClientHello (if needed)
 const SNI_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Bounds-checked big-endian reader for TLS parsing.
+struct Reader<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn remaining(&self) -> usize {
+        self.data.len() - self.pos
+    }
+    fn take(&mut self, n: usize) -> Option<&'a [u8]> {
+        let end = self.pos.checked_add(n)?;
+        let s = self.data.get(self.pos..end)?;
+        self.pos = end;
+        Some(s)
+    }
+    fn skip(&mut self, n: usize) -> Option<()> {
+        self.take(n).map(|_| ())
+    }
+    fn u8(&mut self) -> Option<u8> {
+        self.take(1).map(|b| b[0])
+    }
+    fn u16(&mut self) -> Option<u16> {
+        self.take(2).map(|b| u16::from_be_bytes([b[0], b[1]]))
+    }
+}
+
 /// TCP proxy handler
 pub struct TcpProxy {
     router: Arc<TcpRouter>,
     services: Arc<TcpServiceManager>,
+    middlewares: Arc<TcpMiddlewares>,
 }
 
 impl TcpProxy {
     /// Create a new TCP proxy
-    pub fn new(router: Arc<TcpRouter>, services: Arc<TcpServiceManager>) -> Self {
-        Self { router, services }
+    pub fn new(
+        router: Arc<TcpRouter>,
+        services: Arc<TcpServiceManager>,
+        middlewares: Arc<TcpMiddlewares>,
+    ) -> Self {
+        Self {
+            router,
+            services,
+            middlewares,
+        }
     }
 
     /// Handle an incoming TCP connection
@@ -33,13 +71,14 @@ impl TcpProxy {
         entrypoint: &str,
     ) {
         // Try to extract SNI from TLS ClientHello if this looks like TLS
-        let (sni, initial_data) = match self.peek_tls_sni(&mut client).await {
-            Ok((sni, data)) => (sni, data),
+        let (sni, alpn) = match self.peek_tls_sni(&mut client).await {
+            Ok(v) => v,
             Err(e) => {
                 debug!("TCP: Failed to peek TLS SNI: {}", e);
                 (None, Vec::new())
             }
         };
+        let initial_data: Vec<u8> = Vec::new();
 
         debug!(
             "TCP: Connection from {} (entrypoint: {}, SNI: {:?})",
@@ -47,20 +86,28 @@ impl TcpProxy {
         );
 
         // Find matching route
-        let route =
-            match self
-                .router
-                .match_connection(entrypoint, sni.as_deref(), Some(client_addr))
-            {
-                Some(r) => r,
-                None => {
-                    warn!(
-                        "TCP: No route found for connection from {} (SNI: {:?})",
-                        client_addr, sni
-                    );
-                    return;
-                }
-            };
+        let conn = ConnInfo {
+            sni: sni.as_deref(),
+            alpn: &alpn,
+            client_ip: Some(client_addr.ip()),
+        };
+        let Some(route) = self.router.match_connection(entrypoint, &conn) else {
+            warn!(
+                "TCP: No route found for connection from {} (SNI: {:?})",
+                client_addr, sni
+            );
+            return;
+        };
+
+        // Middlewares (ipAllowList / ipDenyList / inFlightConn). Guards are
+        // held until the connection ends.
+        let _guards = match self.middlewares.admit(&route.middlewares, client_addr.ip()) {
+            Ok(g) => g,
+            Err(reason) => {
+                debug!("TCP: Rejecting {}: {}", client_addr, reason);
+                return;
+            }
+        };
 
         // Get the backend service
         let service = match self.services.get_service(&route.service) {
@@ -129,7 +176,7 @@ impl TcpProxy {
     async fn peek_tls_sni(
         &self,
         stream: &mut TcpStream,
-    ) -> std::io::Result<(Option<String>, Vec<u8>)> {
+    ) -> std::io::Result<(Option<String>, Vec<String>)> {
         // Read initial bytes to check for TLS
         let mut buf = vec![0u8; 1024];
 
@@ -181,101 +228,82 @@ impl TcpProxy {
         }
 
         // Parse ClientHello for SNI
-        let sni = self.parse_sni(&buf[5..]);
-
-        Ok((sni, Vec::new())) // No initial data since we used peek()
+        // peek() leaves the bytes in the socket; nothing to replay.
+        Ok(Self::parse_client_hello(&buf[5..n.min(buf.len())]))
     }
 
-    /// Parse SNI from TLS ClientHello
-    fn parse_sni(&self, data: &[u8]) -> Option<String> {
-        if data.len() < 38 {
-            return None;
+    /// Parse SNI and ALPN from a TLS ClientHello handshake message
+    /// (record header already stripped). Every length is bounds-checked:
+    /// a malformed hello yields `(None, [])`, never a panic.
+    fn parse_client_hello(data: &[u8]) -> (Option<String>, Vec<String>) {
+        Self::try_parse_client_hello(data).unwrap_or((None, Vec::new()))
+    }
+
+    fn try_parse_client_hello(data: &[u8]) -> Option<(Option<String>, Vec<String>)> {
+        let mut r = Reader { data, pos: 0 };
+        if r.u8()? != 0x01 {
+            return None; // not a ClientHello
         }
+        r.skip(3 + 2 + 32)?; // length, legacy_version, random
+        let sid = r.u8()? as usize;
+        r.skip(sid)?;
+        let suites = r.u16()? as usize;
+        r.skip(suites)?;
+        let comp = r.u8()? as usize;
+        r.skip(comp)?;
+        let ext_total = r.u16()? as usize;
+        let mut exts = Reader {
+            data: r.take(ext_total)?,
+            pos: 0,
+        };
 
-        // Handshake type (should be ClientHello = 1)
-        if data[0] != 0x01 {
-            return None;
-        }
-
-        // Skip: handshake type (1), length (3), version (2), random (32)
-        let mut offset = 1 + 3 + 2 + 32;
-
-        if offset >= data.len() {
-            return None;
-        }
-
-        // Session ID length
-        let session_id_len = data[offset] as usize;
-        offset += 1 + session_id_len;
-
-        if offset + 2 > data.len() {
-            return None;
-        }
-
-        // Cipher suites length
-        let cipher_suites_len = ((data[offset] as usize) << 8) | (data[offset + 1] as usize);
-        offset += 2 + cipher_suites_len;
-
-        if offset + 1 > data.len() {
-            return None;
-        }
-
-        // Compression methods length
-        let compression_len = data[offset] as usize;
-        offset += 1 + compression_len;
-
-        if offset + 2 > data.len() {
-            return None;
-        }
-
-        // Extensions length
-        let extensions_len = ((data[offset] as usize) << 8) | (data[offset + 1] as usize);
-        offset += 2;
-
-        let extensions_end = offset + extensions_len;
-        if extensions_end > data.len() {
-            return None;
-        }
-
-        // Parse extensions looking for SNI (type 0x0000)
-        while offset + 4 <= extensions_end {
-            let ext_type = ((data[offset] as u16) << 8) | (data[offset + 1] as u16);
-            let ext_len = ((data[offset + 2] as usize) << 8) | (data[offset + 3] as usize);
-            offset += 4;
-
-            if ext_type == 0x0000 {
-                // SNI extension
-                return self.parse_sni_extension(&data[offset..offset + ext_len]);
+        let (mut sni, mut alpn) = (None, Vec::new());
+        while exts.remaining() >= 4 {
+            let ty = exts.u16()?;
+            let len = exts.u16()? as usize;
+            let mut body = Reader {
+                data: exts.take(len)?,
+                pos: 0,
+            };
+            match ty {
+                0x0000 => {
+                    let mut list = Reader {
+                        data: {
+                            let n = body.u16()? as usize;
+                            body.take(n)?
+                        },
+                        pos: 0,
+                    };
+                    while list.remaining() >= 3 {
+                        let kind = list.u8()?;
+                        let n = list.u16()? as usize;
+                        let name = list.take(n)?;
+                        if kind == 0 {
+                            sni = std::str::from_utf8(name).ok().map(str::to_string);
+                            break;
+                        }
+                    }
+                }
+                0x0010 => {
+                    let mut list = Reader {
+                        data: {
+                            let n = body.u16()? as usize;
+                            body.take(n)?
+                        },
+                        pos: 0,
+                    };
+                    while list.remaining() >= 1 {
+                        let n = list.u8()? as usize;
+                        let p = list.take(n)?;
+                        if let Ok(p) = std::str::from_utf8(p) {
+                            alpn.push(p.to_string());
+                        }
+                    }
+                }
+                _ => {}
             }
-
-            offset += ext_len;
         }
-
-        None
-    }
-
-    /// Parse SNI extension data
-    fn parse_sni_extension(&self, data: &[u8]) -> Option<String> {
-        if data.len() < 5 {
-            return None;
-        }
-
-        // SNI list length
-        let _list_len = ((data[0] as usize) << 8) | (data[1] as usize);
-
-        // First entry
-        let name_type = data[2];
-        if name_type != 0 {
-            // Not a hostname
-            return None;
-        }
-
-        let name_len = ((data[3] as usize) << 8) | (data[4] as usize);
-        if 5 + name_len > data.len() {
-            return None;
-        }
-
-        String::from_utf8(data[5..5 + name_len].to_vec()).ok()
+        Some((sni, alpn))
     }
 
     /// Bidirectional proxy between client and backend
@@ -358,24 +386,65 @@ where
 mod tests {
     use super::*;
 
+    /// ClientHello handshake message with SNI and ALPN extensions.
+    fn hello(sni: &str, alpn: &[&str]) -> Vec<u8> {
+        let mut exts = Vec::new();
+        let name = sni.as_bytes();
+        let mut sni_body = vec![0x00];
+        sni_body.extend((name.len() as u16).to_be_bytes());
+        sni_body.extend(name);
+        let mut sni_ext = (sni_body.len() as u16).to_be_bytes().to_vec();
+        sni_ext.extend(sni_body);
+        exts.extend([0x00, 0x00]);
+        exts.extend((sni_ext.len() as u16).to_be_bytes());
+        exts.extend(sni_ext);
+        let mut list = Vec::new();
+        for p in alpn {
+            list.push(p.len() as u8);
+            list.extend(p.as_bytes());
+        }
+        let mut alpn_ext = (list.len() as u16).to_be_bytes().to_vec();
+        alpn_ext.extend(list);
+        exts.extend([0x00, 0x10]);
+        exts.extend((alpn_ext.len() as u16).to_be_bytes());
+        exts.extend(alpn_ext);
+
+        let mut body = vec![0x03, 0x03];
+        body.extend([0u8; 32]);
+        body.push(0); // session id
+        body.extend([0x00, 0x02, 0x13, 0x01]); // one suite
+        body.extend([0x01, 0x00]); // compression
+        body.extend((exts.len() as u16).to_be_bytes());
+        body.extend(exts);
+        let mut msg = vec![0x01];
+        msg.extend(&(body.len() as u32).to_be_bytes()[1..]);
+        msg.extend(body);
+        msg
+    }
+
     #[test]
-    fn test_parse_sni_from_clienthello() {
-        // A minimal TLS ClientHello with SNI for "example.com"
-        // This is a simplified test - real parsing would need a complete ClientHello
-        let proxy = TcpProxy::new(
-            Arc::new(TcpRouter::from_config(&crate::config::Config::default())),
-            Arc::new(TcpServiceManager::new(&crate::config::Config::default())),
+    fn parses_sni_and_alpn() {
+        let (sni, alpn) =
+            TcpProxy::parse_client_hello(&hello("db.example.com", &["h2", "postgresql"]));
+        assert_eq!(sni.as_deref(), Some("db.example.com"));
+        assert_eq!(alpn, vec!["h2", "postgresql"]);
+    }
+
+    #[test]
+    fn truncated_or_malformed_hello_never_panics() {
+        let h = hello("example.com", &["h2"]);
+        for n in 0..h.len() {
+            let _ = TcpProxy::parse_client_hello(&h[..n]);
+        }
+        let mut bad = h.clone();
+        // inflate the extensions length well past the buffer
+        let ext_len_pos = 1 + 3 + 2 + 32 + 1 + 4 + 2;
+        bad[ext_len_pos] = 0xff;
+        bad[ext_len_pos + 1] = 0xff;
+        assert_eq!(TcpProxy::parse_client_hello(&bad), (None, vec![]));
+        assert_eq!(
+            TcpProxy::parse_client_hello(&[0x01, 0xff, 0xff, 0xff]),
+            (None, vec![])
         );
-
-        // SNI extension data for "example.com"
-        let sni_ext = vec![
-            0x00, 0x0e, // list length = 14
-            0x00, // name type = hostname
-            0x00, 0x0b, // name length = 11
-            b'e', b'x', b'a', b'm', b'p', b'l', b'e', b'.', b'c', b'o', b'm',
-        ];
-
-        let result = proxy.parse_sni_extension(&sni_ext);
-        assert_eq!(result, Some("example.com".to_string()));
     }
 }
