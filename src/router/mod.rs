@@ -19,6 +19,8 @@ pub struct Router {
     catch_all: Vec<usize>,
     /// Host -> route indices for O(1) host lookup (routes with top-level Host rule).
     host_index: HashMap<String, Vec<usize>>,
+    /// Entrypoint `http.middlewares`, applied before every router's own.
+    ep_middlewares: HashMap<String, Vec<String>>,
 }
 
 /// A single routing rule that maps matched requests to a service.
@@ -113,12 +115,30 @@ impl Router {
             candidates.dedup();
         }
 
+        let ep_middlewares = config
+            .entry_points
+            .iter()
+            .filter_map(|(name, ep)| {
+                let mws = &ep.http.as_ref()?.middlewares;
+                (!mws.is_empty()).then(|| (name.clone(), mws.clone()))
+            })
+            .collect();
+
         Self {
             routes,
             candidates_by_ep,
             catch_all,
             host_index,
+            ep_middlewares,
         }
+    }
+
+    /// Middlewares configured on the entrypoint (`http.middlewares`).
+    pub fn entrypoint_middlewares(&self, entrypoint: &str) -> &[String] {
+        self.ep_middlewares
+            .get(entrypoint)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     /// Find the highest-priority route matching the given request attributes.

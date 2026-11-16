@@ -2,6 +2,7 @@ use crate::config::EntryPoint;
 use crate::middleware::{AccessLogWriter, RequestContext};
 use crate::proxy::ProxyHandler;
 use crate::server::SharedState;
+use crate::server::ep_redirect::EntryPointRedirect;
 use crate::tls::try_handle_challenge;
 use anyhow::{Context, Result};
 use http_body_util::BodyExt;
@@ -83,6 +84,8 @@ pub struct Listener {
     proxy: Arc<ProxyHandler>,
     /// Whether this entrypoint terminates TLS (http.tls).
     tls: bool,
+    /// http.redirections.entryPoint, if configured.
+    redirect: Option<Arc<EntryPointRedirect>>,
     forwarded_trust: Arc<ForwardedTrust>,
     max_request_body_bytes: Option<u64>,
 }
@@ -95,6 +98,7 @@ impl Listener {
         entrypoint: EntryPoint,
         state: Arc<SharedState>,
         proxy: Arc<ProxyHandler>,
+        redirect: Option<EntryPointRedirect>,
     ) -> Self {
         let tls = state.tls_options.load().is_tls(&name);
         let forwarded_trust = Arc::new(ForwardedTrust::from_entrypoint(&name, &entrypoint));
@@ -109,6 +113,7 @@ impl Listener {
             state,
             proxy,
             tls,
+            redirect: redirect.map(Arc::new),
             forwarded_trust,
             max_request_body_bytes,
         }
@@ -148,6 +153,7 @@ impl Listener {
             let access_log = state.access_log.clone();
             let forwarded_trust = Arc::clone(&self.forwarded_trust);
             let max_body = self.max_request_body_bytes;
+            let redirect = self.redirect.clone();
 
             tokio::spawn(async move {
                 // Check if draining - reject new connections
@@ -208,6 +214,7 @@ impl Listener {
                                 access_log,
                                 forwarded_trust,
                                 max_body,
+                                redirect,
                             )
                             .await;
                         }
@@ -229,6 +236,7 @@ impl Listener {
                         access_log,
                         forwarded_trust,
                         max_body,
+                        redirect,
                     )
                     .await;
                 }
@@ -251,6 +259,7 @@ impl Listener {
         access_log: AccessLogWriter,
         forwarded_trust: Arc<ForwardedTrust>,
         max_body: Option<u64>,
+        redirect: Option<Arc<EntryPointRedirect>>,
     ) where
         I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
     {
@@ -261,6 +270,7 @@ impl Listener {
             let access_log = access_log.clone();
             let forwarded_trust = Arc::clone(&forwarded_trust);
             let tls_info = tls_info.clone();
+            let redirect = redirect.clone();
 
             async move {
                 // TLS options are chosen from the SNI; the Host must map to the
@@ -337,6 +347,11 @@ impl Listener {
                             .boxed()
                     });
                     return Ok(boxed);
+                }
+
+                // Entrypoint-wide redirection (e.g. HTTP -> HTTPS).
+                if let Some(r) = &redirect {
+                    return Ok(r.respond(&req));
                 }
 
                 // Inject request context for middleware (remote_addr, is_tls)

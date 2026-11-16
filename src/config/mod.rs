@@ -203,6 +203,22 @@ impl Config {
             }
         }
 
+        // Entrypoint redirections must resolve; entrypoint middlewares must exist.
+        for (ep_name, ep) in &self.entry_points {
+            crate::server::ep_redirect::EntryPointRedirect::from_config(self, ep_name, ep)?;
+            if let Some(http) = &ep.http {
+                for mw in &http.middlewares {
+                    if !self.middlewares().contains_key(mw) {
+                        anyhow::bail!(
+                            "entryPoint '{}' references non-existent middleware '{}'",
+                            ep_name,
+                            mw
+                        );
+                    }
+                }
+            }
+        }
+
         // Every HTTP middleware must be buildable: a router must never run
         // without a middleware it references.
         crate::middleware::MiddlewareRegistry::from_config(self.middlewares())

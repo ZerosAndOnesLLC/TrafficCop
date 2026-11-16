@@ -393,6 +393,27 @@ http:
           - "10.0.0.0/8"
 ```
 
+### Entrypoint HTTP Options
+
+```yaml
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:              # every request on :80 -> https on websecure's port
+        entryPoint:
+          to: websecure          # entrypoint name or ":port"
+          scheme: https          # default https
+          permanent: true        # 301/308 (false: 302/307); default true
+  websecure:
+    address: ":443"
+    http:
+      tls: {}
+      middlewares: [security-headers, auth@file]   # run before each router's own middlewares
+```
+
+ACME HTTP-01 challenges are still answered on a redirecting entrypoint.
+
 ### Entrypoint Security Options (v1.5.0)
 
 ```yaml

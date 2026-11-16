@@ -1,5 +1,6 @@
 //! Server lifecycle management including TCP/TLS listeners, UDP listeners, and graceful shutdown.
 
+pub(crate) mod ep_redirect;
 mod listener;
 mod udp_listener;
 
@@ -282,11 +283,14 @@ impl Server {
 
         // Start HTTP/TCP listeners for entrypoints
         for (name, entrypoint) in entrypoints.clone() {
+            let redirect =
+                ep_redirect::EntryPointRedirect::from_config(&config, &name, &entrypoint)?;
             let listener = Listener::new(
                 name.clone(),
                 entrypoint,
                 Arc::clone(&self.state),
                 Arc::clone(&self.proxy),
+                redirect,
             );
 
             let listener_name = name.clone();

@@ -136,7 +136,16 @@ impl ProxyHandler {
 
         // Resolve middleware chain for this route
         // Fail closed: a route never runs with a configured middleware missing.
-        let mw_instances = match middleware_registry.resolve(route_middlewares) {
+        let ep_mws = router.entrypoint_middlewares(entrypoint);
+        let resolved = if ep_mws.is_empty() {
+            middleware_registry.resolve(route_middlewares)
+        } else {
+            middleware_registry.resolve(ep_mws).and_then(|mut v| {
+                v.extend(middleware_registry.resolve(route_middlewares)?);
+                Ok(v)
+            })
+        };
+        let mw_instances = match resolved {
             Ok(m) => m,
             Err(e) => {
                 error!("Route '{}' middleware resolution failed: {}", route_name, e);
