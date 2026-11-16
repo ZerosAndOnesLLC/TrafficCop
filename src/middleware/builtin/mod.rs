@@ -35,7 +35,7 @@ pub use digest_auth::{AuthResult as DigestAuthResult, DigestAuthMiddleware};
 /// Custom error page middleware.
 pub use errors::ErrorsMiddleware;
 /// Delegate authentication to an external HTTP service.
-pub use forward_auth::{AuthResult, ForwardAuthMiddleware};
+pub use forward_auth::{AuthResult, ForwardAuthMiddleware, ForwardAuthRequestInfo};
 /// gRPC-Web to native gRPC protocol translation.
 pub use grpc_web::GrpcWebMiddleware;
 /// Add, remove, or override request/response headers.

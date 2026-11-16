@@ -1,8 +1,13 @@
+use super::auth_wrappers::{DigestAuthWrapper, ForwardAuthWrapper, JwtWrapper};
 use super::builtin::{
-    AddPrefixMiddleware, BasicAuthMiddleware, CorsMiddleware, HeadersMiddleware,
-    IpAllowListMiddleware, IpDenyListMiddleware, RateLimitMiddleware, RedirectSchemeMiddleware,
-    ReplacePathMiddleware, ReplacePathRegexMiddleware, StripPrefixMiddleware,
-    StripPrefixRegexMiddleware,
+    AddPrefixMiddleware, BasicAuthMiddleware, CorsMiddleware, DigestAuthMiddleware,
+    ForwardAuthMiddleware, HeadersMiddleware, IpAllowListMiddleware, IpDenyListMiddleware,
+    JwtMiddleware, RateLimitMiddleware, RedirectSchemeMiddleware, ReplacePathMiddleware,
+    ReplacePathRegexMiddleware, StripPrefixMiddleware, StripPrefixRegexMiddleware,
+};
+use super::source::SourceExtractor;
+use super::traffic_wrappers::{
+    ContentTypeWrapper, InFlightReqWrapper, PassTlsClientCertWrapper, RedirectRegexWrapper,
 };
 use super::{BoxFuture, Middleware, Next};
 use crate::config::MiddlewareConfig;
@@ -11,8 +16,9 @@ use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full};
 use hyper::header::{CONTENT_TYPE, HeaderValue};
 use hyper::{Request, Response, StatusCode, body::Incoming};
-use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use rustls::pki_types::CertificateDer;
+use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -23,175 +29,279 @@ pub struct RequestContext {
     pub remote_addr: SocketAddr,
     /// Whether the connection arrived over TLS.
     pub is_tls: bool,
+    /// Client certificate chain presented during the TLS handshake (leaf first).
+    pub client_certs: Option<Arc<Vec<CertificateDer<'static>>>>,
 }
 
-/// Registry of instantiated middleware, keyed by name
+/// Registry of instantiated middleware, keyed by name.
+///
+/// Construction fails if any middleware cannot be built: a router must never
+/// run with a configured middleware silently missing.
 pub struct MiddlewareRegistry {
     middlewares: HashMap<String, Arc<dyn Middleware>>,
+    /// Chain name -> flattened list of non-chain middleware names.
+    chains: HashMap<String, Vec<String>>,
 }
 
 impl MiddlewareRegistry {
-    /// Build registry from config middleware definitions
-    pub fn from_config(configs: &HashMap<String, MiddlewareConfig>) -> Self {
+    /// Build registry from config middleware definitions.
+    pub fn from_config(configs: &HashMap<String, MiddlewareConfig>) -> Result<Self, String> {
         let mut middlewares: HashMap<String, Arc<dyn Middleware>> = HashMap::new();
 
         for (name, config) in configs {
-            if let Some(mw) = Self::create_middleware(name, config) {
-                debug!("Registered middleware '{}'", name);
-                middlewares.insert(name.clone(), mw);
-            } else {
-                warn!(
-                    "Unsupported middleware type for '{}': {}",
-                    name,
-                    config.middleware_type()
-                );
+            if config.chain.is_some() {
+                continue;
+            }
+            let mw = Self::create_middleware(name, config)
+                .map_err(|e| format!("middleware '{name}': {e}"))?;
+            debug!("Registered middleware '{}'", name);
+            middlewares.insert(name.clone(), mw);
+        }
+
+        let mut chains = HashMap::new();
+        for (name, config) in configs {
+            if config.chain.is_some() {
+                let mut out = Vec::new();
+                let mut stack = HashSet::new();
+                Self::flatten(name, configs, &mut stack, &mut out)?;
+                chains.insert(name.clone(), out);
             }
         }
 
-        Self { middlewares }
+        Ok(Self {
+            middlewares,
+            chains,
+        })
     }
 
-    /// Look up middleware by name, returns ordered list of middleware instances
-    pub fn resolve(&self, names: &[String]) -> Vec<Arc<dyn Middleware>> {
-        names
-            .iter()
-            .filter_map(|name| {
-                let mw = self.middlewares.get(name);
-                if mw.is_none() {
-                    warn!("Middleware '{}' not found in registry", name);
+    /// Expand a chain into its leaf middleware names, rejecting cycles and
+    /// unknown references.
+    fn flatten(
+        name: &str,
+        configs: &HashMap<String, MiddlewareConfig>,
+        stack: &mut HashSet<String>,
+        out: &mut Vec<String>,
+    ) -> Result<(), String> {
+        let config = configs
+            .get(name)
+            .ok_or_else(|| format!("chain references unknown middleware '{name}'"))?;
+        let Some(chain) = &config.chain else {
+            out.push(name.to_string());
+            return Ok(());
+        };
+        if !stack.insert(name.to_string()) {
+            return Err(format!("middleware chain cycle detected at '{name}'"));
+        }
+        if chain.middlewares.is_empty() {
+            return Err(format!("chain '{name}' has no middlewares"));
+        }
+        for child in &chain.middlewares {
+            Self::flatten(child, configs, stack, out)?;
+        }
+        stack.remove(name);
+        Ok(())
+    }
+
+    /// Look up middleware by name and return the ordered list of instances,
+    /// expanding chains. Any unknown name is an error: callers must refuse
+    /// the request rather than serve it without the middleware.
+    pub fn resolve(&self, names: &[String]) -> Result<Vec<Arc<dyn Middleware>>, String> {
+        let mut out = Vec::with_capacity(names.len());
+        for name in names {
+            if let Some(mw) = self.middlewares.get(name) {
+                out.push(Arc::clone(mw));
+            } else if let Some(flat) = self.chains.get(name) {
+                for leaf in flat {
+                    let mw = self
+                        .middlewares
+                        .get(leaf)
+                        .ok_or_else(|| format!("middleware '{leaf}' not found"))?;
+                    out.push(Arc::clone(mw));
                 }
-                mw.cloned()
-            })
-            .collect()
+            } else {
+                return Err(format!("middleware '{name}' not found"));
+            }
+        }
+        Ok(out)
     }
 
-    fn create_middleware(name: &str, config: &MiddlewareConfig) -> Option<Arc<dyn Middleware>> {
-        // Headers middleware
+    fn create_middleware(
+        name: &str,
+        config: &MiddlewareConfig,
+    ) -> Result<Arc<dyn Middleware>, String> {
+        let types = config.configured_types();
+        match types.len() {
+            0 => return Err("no middleware type configured".to_string()),
+            1 => {}
+            _ => {
+                return Err(format!(
+                    "multiple middleware types in one definition are not supported: {}",
+                    types.join(", ")
+                ));
+            }
+        }
+        let name = name.to_string();
+
         if let Some(headers_config) = &config.headers {
             let headers = HeadersMiddleware::new(headers_config.clone());
-            // Also check for CORS config within headers
-            let cors = CorsMiddleware::from_headers_config(headers_config);
-            if let Some(cors) = cors {
-                return Some(Arc::new(HeadersAndCorsWrapper {
-                    name: name.to_string(),
+            if let Some(cors) = CorsMiddleware::from_headers_config(headers_config) {
+                return Ok(Arc::new(HeadersAndCorsWrapper {
+                    name,
                     headers,
                     cors,
                 }));
             }
-            return Some(Arc::new(HeadersWrapper {
-                name: name.to_string(),
+            return Ok(Arc::new(HeadersWrapper {
+                name,
                 inner: headers,
             }));
         }
 
-        // Rate limit middleware
         if let Some(rl_config) = &config.rate_limit {
-            let limiter = RateLimitMiddleware::new(rl_config.clone());
-            return Some(Arc::new(RateLimitWrapper {
-                name: name.to_string(),
-                inner: limiter,
+            let source = SourceExtractor::from_config(rl_config.source_criterion.as_ref())
+                .map_err(|e| format!("rateLimit: {e}"))?;
+            if rl_config.period.is_zero() {
+                return Err("rateLimit: period must be greater than 0".to_string());
+            }
+            return Ok(Arc::new(RateLimitWrapper {
+                name,
+                inner: RateLimitMiddleware::new(rl_config.clone()),
+                source,
             }));
         }
 
-        // IP allowlist
         if let Some(allow_config) = config.get_ip_allow_list() {
-            let filter = IpAllowListMiddleware::new(allow_config);
-            return Some(Arc::new(IpAllowWrapper {
-                name: name.to_string(),
-                inner: filter,
+            return Ok(Arc::new(IpAllowWrapper {
+                name,
+                inner: IpAllowListMiddleware::new(allow_config)?,
             }));
         }
 
-        // IP denylist
         if let Some(deny_config) = &config.ip_deny_list {
-            let filter = IpDenyListMiddleware::new(deny_config);
-            return Some(Arc::new(IpDenyWrapper {
-                name: name.to_string(),
-                inner: filter,
+            return Ok(Arc::new(IpDenyWrapper {
+                name,
+                inner: IpDenyListMiddleware::new(deny_config)?,
             }));
         }
 
-        // Basic auth
         if let Some(auth_config) = &config.basic_auth {
-            let auth = BasicAuthMiddleware::new(auth_config.clone());
-            return Some(Arc::new(BasicAuthWrapper {
-                name: name.to_string(),
-                inner: auth,
+            return Ok(Arc::new(BasicAuthWrapper {
+                name,
+                inner: BasicAuthMiddleware::new(auth_config.clone())?,
             }));
         }
 
-        // Redirect scheme
+        if let Some(c) = &config.digest_auth {
+            return Ok(Arc::new(DigestAuthWrapper {
+                name,
+                inner: DigestAuthMiddleware::new(c.clone())?,
+            }));
+        }
+
+        if let Some(c) = &config.forward_auth {
+            return Ok(Arc::new(ForwardAuthWrapper {
+                name,
+                inner: ForwardAuthMiddleware::new(c.clone())?,
+            }));
+        }
+
+        if let Some(c) = &config.jwt {
+            let inner = JwtMiddleware::new(c.clone()).ok_or(
+                "jwt: invalid configuration (supported: HS256/HS384/HS512 with a secret and a valid headerName)",
+            )?;
+            return Ok(Arc::new(JwtWrapper {
+                name,
+                inner,
+                forward_headers: c.forward_claims.values().cloned().collect(),
+            }));
+        }
+
         if let Some(redirect_config) = &config.redirect_scheme {
-            let redirect = RedirectSchemeMiddleware::new(redirect_config.clone());
-            return Some(Arc::new(RedirectSchemeWrapper {
-                name: name.to_string(),
-                inner: redirect,
+            return Ok(Arc::new(RedirectSchemeWrapper {
+                name,
+                inner: RedirectSchemeMiddleware::new(redirect_config.clone()),
             }));
         }
 
-        // Strip prefix
+        if let Some(c) = &config.redirect_regex {
+            return Ok(Arc::new(RedirectRegexWrapper::new(name, c)?));
+        }
+
+        if let Some(c) = &config.in_flight_req {
+            return Ok(Arc::new(InFlightReqWrapper::new(name, c)?));
+        }
+
+        if config.content_type.is_some() {
+            return Ok(Arc::new(ContentTypeWrapper { name }));
+        }
+
+        if let Some(c) = &config.pass_tls_client_cert {
+            return Ok(Arc::new(PassTlsClientCertWrapper::new(name, c)));
+        }
+
         if let Some(strip_config) = &config.strip_prefix {
-            let strip = StripPrefixMiddleware::new(strip_config.clone());
-            return Some(Arc::new(StripPrefixWrapper {
-                name: name.to_string(),
-                inner: strip,
+            return Ok(Arc::new(StripPrefixWrapper {
+                name,
+                inner: StripPrefixMiddleware::new(strip_config.clone()),
             }));
         }
 
-        // Add prefix
         if let Some(prefix_config) = &config.add_prefix {
-            let add = AddPrefixMiddleware::new(prefix_config.clone());
-            return Some(Arc::new(AddPrefixWrapper {
-                name: name.to_string(),
-                inner: add,
+            return Ok(Arc::new(AddPrefixWrapper {
+                name,
+                inner: AddPrefixMiddleware::new(prefix_config.clone()),
             }));
         }
 
-        // Replace path
         if let Some(replace_config) = &config.replace_path {
-            let replace = ReplacePathMiddleware::new(replace_config.clone());
-            return Some(Arc::new(ReplacePathWrapper {
-                name: name.to_string(),
-                inner: replace,
+            return Ok(Arc::new(ReplacePathWrapper {
+                name,
+                inner: ReplacePathMiddleware::new(replace_config.clone()),
             }));
         }
 
-        // Strip prefix regex
-        if let Some(strip_regex_config) = &config.strip_prefix_regex
-            && let Some(strip) = StripPrefixRegexMiddleware::new(strip_regex_config.clone())
+        if let Some(c) = &config.strip_prefix_regex {
+            let inner = StripPrefixRegexMiddleware::new(c.clone())
+                .ok_or("stripPrefixRegex: invalid regex")?;
+            return Ok(Arc::new(StripPrefixRegexWrapper { name, inner }));
+        }
+
+        if let Some(c) = &config.replace_path_regex {
+            let inner = ReplacePathRegexMiddleware::new(c.clone())
+                .ok_or("replacePathRegex: invalid regex")?;
+            return Ok(Arc::new(ReplacePathRegexWrapper { name, inner }));
+        }
+
+        // Not yet implemented, and not access controls: accepted with a loud
+        // warning so existing configs keep starting. Tracked publicly.
+        if config.compress.is_some()
+            || config.retry.is_some()
+            || config.circuit_breaker.is_some()
+            || config.errors.is_some()
+            || config.grpc_web.is_some()
         {
-            return Some(Arc::new(StripPrefixRegexWrapper {
-                name: name.to_string(),
-                inner: strip,
-            }));
+            warn!(
+                "middleware '{}': type '{}' is accepted but NOT applied yet; requests pass through unchanged",
+                name,
+                config.middleware_type()
+            );
+            return Ok(Arc::new(NotAppliedWrapper { name }));
         }
 
-        // Replace path regex
-        if let Some(replace_regex_config) = &config.replace_path_regex
-            && let Some(replace) = ReplacePathRegexMiddleware::new(replace_regex_config.clone())
-        {
-            return Some(Arc::new(ReplacePathRegexWrapper {
-                name: name.to_string(),
-                inner: replace,
-            }));
-        }
-
-        // Compress middleware
-        if let Some(compress_config) = &config.compress {
-            return Some(Arc::new(CompressWrapper {
-                name: name.to_string(),
-                min_size: compress_config.min_response_body_bytes,
-            }));
-        }
-
-        None
+        Err(format!(
+            "middleware type '{}' is not supported yet",
+            config.middleware_type()
+        ))
     }
 }
 
 // --- Wrapper implementations ---
 
 /// Build a plain-text error response with the given status code and message.
-fn error_response(status: StatusCode, msg: &str) -> Response<BoxBody<Bytes, hyper::Error>> {
+pub(super) fn error_response(
+    status: StatusCode,
+    msg: &str,
+) -> Response<BoxBody<Bytes, hyper::Error>> {
     Response::builder()
         .status(status)
         .header(CONTENT_TYPE, "text/plain")
@@ -201,13 +311,6 @@ fn error_response(status: StatusCode, msg: &str) -> Response<BoxBody<Bytes, hype
                 .boxed(),
         )
         .unwrap()
-}
-
-/// Extract the client IP from the request's [`RequestContext`] extension.
-fn get_client_ip(req: &Request<Incoming>) -> Option<IpAddr> {
-    req.extensions()
-        .get::<RequestContext>()
-        .map(|ctx| ctx.remote_addr.ip())
 }
 
 // --- Headers ---
@@ -285,6 +388,8 @@ impl Middleware for HeadersAndCorsWrapper {
 struct RateLimitWrapper {
     name: String,
     inner: RateLimitMiddleware,
+    /// Bucketing key per Traefik sourceCriterion (remote address by default).
+    source: SourceExtractor,
 }
 
 impl Middleware for RateLimitWrapper {
@@ -298,13 +403,19 @@ impl Middleware for RateLimitWrapper {
         next: Next<'a>,
     ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
-            if let Some(ip) = get_client_ip(&req)
-                && !self.inner.is_allowed(ip)
-            {
+            let Some(key) = self.source.extract(&req) else {
                 return Ok(error_response(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "Rate limit exceeded",
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal Server Error",
                 ));
+            };
+            if !self.inner.is_allowed_by_key(&key) {
+                let mut resp = error_response(StatusCode::TOO_MANY_REQUESTS, "Too Many Requests");
+                resp.headers_mut().insert(
+                    hyper::header::RETRY_AFTER,
+                    HeaderValue::from(self.inner.retry_after_secs()),
+                );
+                return Ok(resp);
             }
             next.run(req).await
         })
@@ -328,10 +439,7 @@ impl Middleware for IpAllowWrapper {
         next: Next<'a>,
     ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
-            if self.inner.has_rules()
-                && let Some(ip) = get_client_ip(&req)
-                && !self.inner.is_allowed(ip)
-            {
+            if !self.inner.allows(&req) {
                 let status = StatusCode::from_u16(self.inner.reject_status_code())
                     .unwrap_or(StatusCode::FORBIDDEN);
                 return Ok(error_response(status, "Forbidden"));
@@ -358,10 +466,7 @@ impl Middleware for IpDenyWrapper {
         next: Next<'a>,
     ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
-            if self.inner.has_rules()
-                && let Some(ip) = get_client_ip(&req)
-                && self.inner.is_denied(ip)
-            {
+            if self.inner.denies(&req) {
                 return Ok(error_response(StatusCode::FORBIDDEN, "Forbidden"));
             }
             next.run(req).await
@@ -576,14 +681,12 @@ impl Middleware for ReplacePathRegexWrapper {
     }
 }
 
-// --- Compress (placeholder — actual compression requires body collection) ---
-struct CompressWrapper {
+// --- Accepted but not yet applied (compress, retry, circuitBreaker, errors, grpcWeb) ---
+struct NotAppliedWrapper {
     name: String,
-    #[allow(dead_code)]
-    min_size: u64,
 }
 
-impl Middleware for CompressWrapper {
+impl Middleware for NotAppliedWrapper {
     fn name(&self) -> &str {
         &self.name
     }
@@ -593,10 +696,109 @@ impl Middleware for CompressWrapper {
         req: Request<Incoming>,
         next: Next<'a>,
     ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
-        // Compression needs to collect the response body and re-encode it,
-        // which requires significant changes to the response pipeline.
-        // For now, pass through — compression will be done at the response level
-        // when the full middleware pipeline supports body transformation.
-        Box::pin(async move { next.run(req).await })
+        next.run(req)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn configs(yaml: &str) -> HashMap<String, MiddlewareConfig> {
+        serde_norway::from_str(yaml).unwrap()
+    }
+
+    fn names(v: &[Arc<dyn Middleware>]) -> Vec<&str> {
+        v.iter().map(|m| m.name()).collect()
+    }
+
+    const AUTH: &str = r#"
+auth:
+  basicAuth:
+    users: ["u:$2y$05$c3RYpRMhSVOWHM6Ld2Lp8uFV3xJ6eOTW2QHC.JxHgbm2cU0vXkLz."]
+hdr:
+  headers:
+    customRequestHeaders: {X-A: "1"}
+"#;
+
+    #[test]
+    fn chain_is_flattened_in_order() {
+        let c = configs(&format!(
+            "{AUTH}\ninner:\n  chain:\n    middlewares: [hdr]\nouter:\n  chain:\n    middlewares: [auth, inner]\n"
+        ));
+        let r = MiddlewareRegistry::from_config(&c).unwrap();
+        let got = r.resolve(&["outer".into()]).unwrap();
+        assert_eq!(names(&got), vec!["auth", "hdr"]);
+    }
+
+    #[test]
+    fn chain_cycle_and_unknown_ref_rejected() {
+        let c = configs("a:\n  chain:\n    middlewares: [b]\nb:\n  chain:\n    middlewares: [a]\n");
+        assert!(
+            MiddlewareRegistry::from_config(&c)
+                .err()
+                .unwrap()
+                .contains("cycle")
+        );
+        let c = configs("a:\n  chain:\n    middlewares: [missing]\n");
+        assert!(
+            MiddlewareRegistry::from_config(&c)
+                .err()
+                .unwrap()
+                .contains("missing")
+        );
+    }
+
+    #[test]
+    fn resolve_unknown_name_fails_closed() {
+        let r = MiddlewareRegistry::from_config(&configs(AUTH)).unwrap();
+        assert!(r.resolve(&["nope".into()]).is_err());
+        assert!(r.resolve(&["auth".into(), "nope".into()]).is_err());
+    }
+
+    #[test]
+    fn previously_skipped_types_now_build() {
+        let c = configs(
+            r#"
+fa:
+  forwardAuth: {address: "http://auth:9091/verify"}
+da:
+  digestAuth: {users: ["test:traefik:a2688e031edb4be6a3797f3882655c05"]}
+jw:
+  jwt: {secret: "s", algorithm: "HS256"}
+rr:
+  redirectRegex: {regex: "^http://a/(.*)", replacement: "http://b/${1}"}
+ifr:
+  inFlightReq: {amount: 10}
+ct:
+  contentType: {}
+pc:
+  passTLSClientCert: {pem: true}
+rt:
+  retry: {attempts: 3}
+"#,
+        );
+        let r = MiddlewareRegistry::from_config(&c).unwrap();
+        for n in ["fa", "da", "jw", "rr", "ifr", "ct", "pc", "rt"] {
+            assert!(r.resolve(&[n.into()]).is_ok(), "{n}");
+        }
+    }
+
+    #[test]
+    fn unsupported_or_invalid_definitions_are_errors() {
+        for yaml in [
+            "x:\n  buffering: {maxRequestBodyBytes: 10}\n",
+            "x:\n  forwardAuth: {address: \"not a url\"}\n",
+            "x:\n  digestAuth: {users: [\"admin:plaintext\"]}\n",
+            "x:\n  jwt: {algorithm: \"RS256\"}\n",
+            "x:\n  inFlightReq: {amount: 0}\n",
+            "x: {}\n",
+            "x:\n  addPrefix: {prefix: /a}\n  stripPrefix: {prefixes: [/b]}\n",
+        ] {
+            assert!(
+                MiddlewareRegistry::from_config(&configs(yaml)).is_err(),
+                "should reject: {yaml}"
+            );
+        }
     }
 }

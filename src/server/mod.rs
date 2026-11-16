@@ -1,5 +1,6 @@
 //! Server lifecycle management including TCP/TLS listeners, UDP listeners, and graceful shutdown.
 
+pub(crate) mod ep_redirect;
 mod listener;
 mod udp_listener;
 
@@ -12,11 +13,12 @@ use crate::config::{Config, watch_config_async};
 use crate::health::{PassiveHealthChecker, PassiveHealthConfig};
 use crate::middleware::{AccessLogWriter, MiddlewareRegistry};
 use crate::proxy::ProxyHandler;
+use crate::proxy::TransportRegistry;
 use crate::router::Router;
 use crate::service::ServiceManager;
-use crate::tls::{AcmeManager, CertificateResolver, PendingChallenge};
-use crate::udp::{UdpRouter, UdpServiceManager};
-use anyhow::Result;
+use crate::tls::{AcmeManager, CertificateResolver, PendingChallenge, TlsOptionSet};
+use crate::udp::{UdpMiddlewares, UdpRouter, UdpServiceManager};
+use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -109,24 +111,22 @@ impl Default for ConnectionTracker {
 /// Build a cert resolver from static `tls.certificates` entries in the config.
 /// Returns None when no static certs are configured; returns Some even on
 /// partial success so at least the successfully-loaded certs work.
-fn build_static_resolver(config: &Config) -> Option<Arc<CertificateResolver>> {
-    let certs = config.tls.as_ref()?.certificates.as_slice();
+/// Static certificates from `tls.certificates`. A certificate that fails to
+/// load is a startup error, never a silent downgrade.
+fn build_static_resolver(config: &Config) -> Result<Option<Arc<CertificateResolver>>> {
+    let Some(certs) = config.tls.as_ref().map(|t| t.certificates.as_slice()) else {
+        return Ok(None);
+    };
     if certs.is_empty() {
-        return None;
+        return Ok(None);
     }
-    match CertificateResolver::from_static_certs(certs) {
-        Ok(resolver) => {
-            info!(
-                "Loaded {} static TLS certificate(s) for SNI-based resolution",
-                certs.len()
-            );
-            Some(Arc::new(resolver))
-        }
-        Err(e) => {
-            error!("Failed to load static TLS certificates: {}", e);
-            None
-        }
-    }
+    let resolver =
+        CertificateResolver::from_static_certs(certs).context("loading tls.certificates")?;
+    info!(
+        "Loaded {} static TLS certificate(s) for SNI-based resolution",
+        certs.len()
+    );
+    Ok(Some(Arc::new(resolver)))
 }
 
 /// Shared state that can be hot-reloaded
@@ -137,6 +137,10 @@ pub struct SharedState {
     pub services: ArcSwap<ServiceManager>,
     /// The current middleware registry (hot-swappable).
     pub middlewares: ArcSwap<MiddlewareRegistry>,
+    /// Backend transports (serversTransports), hot-swappable.
+    pub transports: ArcSwap<TransportRegistry>,
+    /// Per-entrypoint TLS options selected by SNI, hot-swappable.
+    pub tls_options: ArcSwap<TlsOptionSet>,
     /// Passive health checker shared across all request paths.
     pub passive_health: Arc<PassiveHealthChecker>,
     /// Tracks active connections for graceful drain.
@@ -151,49 +155,63 @@ pub struct SharedState {
 
 impl SharedState {
     /// Build shared state from config without ACME support.
-    pub fn new(config: &Config) -> Self {
-        let cert_resolver = build_static_resolver(config);
-        Self {
+    pub fn new(config: &Config) -> Result<Self> {
+        let cert_resolver = build_static_resolver(config)?;
+        Ok(Self {
+            tls_options: ArcSwap::from_pointee(TlsOptionSet::build(config, cert_resolver.clone())?),
             router: ArcSwap::from_pointee(Router::from_config(config)),
             services: ArcSwap::from_pointee(ServiceManager::new(config)),
-            middlewares: ArcSwap::from_pointee(MiddlewareRegistry::from_config(
-                config.middlewares(),
-            )),
+            middlewares: ArcSwap::from_pointee(
+                MiddlewareRegistry::from_config(config.middlewares())
+                    .map_err(anyhow::Error::msg)?,
+            ),
+            transports: ArcSwap::from_pointee(TransportRegistry::from_config(config, None)?),
             passive_health: Arc::new(PassiveHealthChecker::new(PassiveHealthConfig::default())),
             connections: ConnectionTracker::new(),
             acme_challenges: Arc::new(RwLock::new(HashMap::new())),
             cert_resolver,
             access_log: AccessLogWriter::new(&config.access_log),
-        }
+        })
     }
 
     /// Create with ACME manager
-    pub fn with_acme(config: &Config, acme_manager: &AcmeManager) -> Self {
-        Self {
+    pub fn with_acme(config: &Config, acme_manager: &AcmeManager) -> Result<Self> {
+        let cert_resolver = Some(acme_manager.get_resolver());
+        Ok(Self {
+            tls_options: ArcSwap::from_pointee(TlsOptionSet::build(config, cert_resolver.clone())?),
             router: ArcSwap::from_pointee(Router::from_config(config)),
             services: ArcSwap::from_pointee(ServiceManager::new(config)),
-            middlewares: ArcSwap::from_pointee(MiddlewareRegistry::from_config(
-                config.middlewares(),
-            )),
+            middlewares: ArcSwap::from_pointee(
+                MiddlewareRegistry::from_config(config.middlewares())
+                    .map_err(anyhow::Error::msg)?,
+            ),
+            transports: ArcSwap::from_pointee(TransportRegistry::from_config(config, None)?),
             passive_health: Arc::new(PassiveHealthChecker::new(PassiveHealthConfig::default())),
             connections: ConnectionTracker::new(),
             acme_challenges: acme_manager.get_pending_challenges(),
-            cert_resolver: Some(acme_manager.get_resolver()),
+            cert_resolver,
             access_log: AccessLogWriter::new(&config.access_log),
-        }
+        })
     }
 
     /// Hot-reload router, services, and middleware from updated config.
-    pub fn reload(&self, config: &Config) {
+    /// On error nothing is swapped and the running config stays active.
+    pub fn reload(&self, config: &Config) -> Result<()> {
+        let new_middlewares =
+            MiddlewareRegistry::from_config(config.middlewares()).map_err(anyhow::Error::msg)?;
+        let new_transports = TransportRegistry::from_config(config, Some(&self.transports.load()))?;
+        let new_tls = TlsOptionSet::build(config, self.cert_resolver.clone())?;
         let new_router = Router::from_config(config);
         let new_services = ServiceManager::new(config);
-        let new_middlewares = MiddlewareRegistry::from_config(config.middlewares());
 
         self.router.store(Arc::new(new_router));
         self.services.store(Arc::new(new_services));
         self.middlewares.store(Arc::new(new_middlewares));
+        self.transports.store(Arc::new(new_transports));
+        self.tls_options.store(Arc::new(new_tls));
 
         info!("Router, services, and middlewares reloaded");
+        Ok(())
     }
 }
 
@@ -209,38 +227,42 @@ pub struct Server {
 
 impl Server {
     /// Create a server with default config path.
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config) -> Result<Self> {
         Self::with_path(config, PathBuf::from("config.yaml"))
     }
 
     /// Create a server with an explicit config file path for hot-reload watching.
-    pub fn with_path(config: Config, config_path: PathBuf) -> Self {
-        let state = Arc::new(SharedState::new(&config));
+    pub fn with_path(config: Config, config_path: PathBuf) -> Result<Self> {
+        let state = Arc::new(SharedState::new(&config)?);
         let config = Arc::new(ArcSwap::from_pointee(config));
         let proxy = Arc::new(ProxyHandler::new());
 
-        Self {
+        Ok(Self {
             config_path,
             config,
             state,
             proxy,
             acme_manager: None,
-        }
+        })
     }
 
     /// Create server with ACME support
-    pub fn with_acme(config: Config, config_path: PathBuf, acme_manager: Arc<AcmeManager>) -> Self {
-        let state = Arc::new(SharedState::with_acme(&config, &acme_manager));
+    pub fn with_acme(
+        config: Config,
+        config_path: PathBuf,
+        acme_manager: Arc<AcmeManager>,
+    ) -> Result<Self> {
+        let state = Arc::new(SharedState::with_acme(&config, &acme_manager)?);
         let config = Arc::new(ArcSwap::from_pointee(config));
         let proxy = Arc::new(ProxyHandler::new());
 
-        Self {
+        Ok(Self {
             config_path,
             config,
             state,
             proxy,
             acme_manager: Some(acme_manager),
-        }
+        })
     }
 
     /// Start all listeners, config watcher, and block until shutdown signal.
@@ -261,11 +283,14 @@ impl Server {
 
         // Start HTTP/TCP listeners for entrypoints
         for (name, entrypoint) in entrypoints.clone() {
+            let redirect =
+                ep_redirect::EntryPointRedirect::from_config(&config, &name, &entrypoint)?;
             let listener = Listener::new(
                 name.clone(),
                 entrypoint,
                 Arc::clone(&self.state),
                 Arc::clone(&self.proxy),
+                redirect,
             );
 
             let listener_name = name.clone();
@@ -280,8 +305,12 @@ impl Server {
 
         // Start UDP listeners if UDP config is present
         if config.has_udp() {
-            let udp_router = Arc::new(UdpRouter::from_config(&config));
+            let udp_router = Arc::new(UdpRouter::from_config(&config).map_err(anyhow::Error::msg)?);
             let udp_services = Arc::new(UdpServiceManager::new(&config));
+            let udp_middlewares = Arc::new(
+                UdpMiddlewares::from_config(config.udp_middlewares())
+                    .map_err(anyhow::Error::msg)?,
+            );
 
             // Find entrypoints that have UDP routers
             for (name, entrypoint) in entrypoints {
@@ -294,6 +323,7 @@ impl Server {
                         entrypoint,
                         Arc::clone(&udp_router),
                         Arc::clone(&udp_services),
+                        Arc::clone(&udp_middlewares),
                     );
 
                     let listener_name = name.clone();
@@ -319,11 +349,12 @@ impl Server {
             while let Ok(new_config) = rx.recv().await {
                 info!("Hot reloading configuration...");
 
-                // Update config
+                // Build the new state first; keep the running config on failure.
+                if let Err(e) = state_arc.reload(&new_config) {
+                    error!("Config reload rejected, keeping current config: {}", e);
+                    continue;
+                }
                 config_arc.store(Arc::new(new_config.clone()));
-
-                // Reload router and services
-                state_arc.reload(&new_config);
 
                 // Restart health checks with new services
                 state_arc.services.load().start_health_checks();
@@ -372,8 +403,8 @@ impl Server {
     /// Manually reload configuration (validates before applying).
     pub fn reload_config(&self, config: Config) -> Result<()> {
         config.validate()?;
-        self.config.store(Arc::new(config.clone()));
-        self.state.reload(&config);
+        self.state.reload(&config)?;
+        self.config.store(Arc::new(config));
         info!("Configuration reloaded manually");
         Ok(())
     }

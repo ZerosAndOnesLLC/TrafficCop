@@ -28,7 +28,14 @@ pub struct RateLimitMiddleware {
     last_sync: DashMap<String, Instant>,
     /// Cleanup interval
     cleanup_interval: Duration,
+    /// Count of buckets created (drives amortized cleanup).
+    new_keys: AtomicU64,
 }
+
+/// Run an idle-bucket purge after this many new keys...
+const CLEANUP_EVERY_NEW_KEYS: u64 = 10_000;
+/// ...once at least this many buckets exist.
+const CLEANUP_MIN_BUCKETS: usize = 10_000;
 
 struct TokenBucket {
     tokens: AtomicU64,
@@ -48,8 +55,10 @@ impl TokenBucket {
         }
     }
 
+    /// Take one token. Refill rate is `average` tokens per `period_nanos`
+    /// (Traefik: rate = average / period); capacity is `burst`.
     #[inline]
-    fn try_acquire(&self, tokens_per_sec: u64, burst: u64) -> bool {
+    fn try_acquire(&self, average: u64, period_nanos: u64, burst: u64) -> bool {
         let now_nanos = self.epoch.elapsed().as_nanos() as u64;
         let max_tokens = burst * 1000;
 
@@ -57,9 +66,11 @@ impl TokenBucket {
         for _ in 0..8 {
             let last = self.last_update.load(Ordering::Relaxed);
 
-            // Calculate tokens to add based on time elapsed
-            let elapsed_millis = (now_nanos.saturating_sub(last)) / 1_000_000;
-            let tokens_to_add = (elapsed_millis * tokens_per_sec) / 1000;
+            // Milli-tokens earned since the last update, at nanosecond precision.
+            let elapsed = u128::from(now_nanos.saturating_sub(last));
+            let tokens_to_add = (elapsed * u128::from(average) * 1000
+                / u128::from(period_nanos.max(1)))
+            .min(u128::from(u64::MAX)) as u64;
 
             let current = self.tokens.load(Ordering::Relaxed);
             let new_tokens = (current + tokens_to_add).min(max_tokens);
@@ -117,6 +128,7 @@ impl RateLimitMiddleware {
             sync_interval: Duration::from_millis(100),
             last_sync: DashMap::new(),
             cleanup_interval: Duration::from_secs(60),
+            new_keys: AtomicU64::new(0),
         }
     }
 
@@ -129,6 +141,7 @@ impl RateLimitMiddleware {
             sync_interval: Duration::from_millis(100),
             last_sync: DashMap::new(),
             cleanup_interval: Duration::from_secs(60),
+            new_keys: AtomicU64::new(0),
         }
     }
 
@@ -142,12 +155,38 @@ impl RateLimitMiddleware {
     /// Check if request is allowed by arbitrary key
     #[inline]
     pub fn is_allowed_by_key(&self, key: &str) -> bool {
-        let bucket = self
-            .buckets
-            .entry(key.to_string())
-            .or_insert_with(|| TokenBucket::new(self.config.burst.max(self.config.average)));
+        // Traefik: average 0 disables rate limiting.
+        if self.config.average == 0 {
+            return true;
+        }
+        let capacity = self.config.burst.max(1);
+        let period_nanos = self
+            .config
+            .period
+            .as_std()
+            .as_nanos()
+            .min(u128::from(u64::MAX)) as u64;
 
-        let allowed = bucket.try_acquire(self.config.average, self.config.burst.max(1));
+        let allowed = match self.buckets.get(key) {
+            Some(bucket) => bucket.try_acquire(self.config.average, period_nanos, capacity),
+            None => {
+                // Bound memory: keys come from client-controlled sources
+                // (IPs, headers), so idle buckets are purged periodically.
+                if self
+                    .new_keys
+                    .fetch_add(1, Ordering::Relaxed)
+                    .is_multiple_of(CLEANUP_EVERY_NEW_KEYS)
+                    && self.buckets.len() >= CLEANUP_MIN_BUCKETS
+                {
+                    self.cleanup(self.idle_ttl());
+                }
+                let bucket = self
+                    .buckets
+                    .entry(key.to_string())
+                    .or_insert_with(|| TokenBucket::new(capacity));
+                bucket.try_acquire(self.config.average, period_nanos, capacity)
+            }
+        };
 
         // Schedule async sync if we have a distributed store
         if self.store.is_some() {
@@ -241,6 +280,20 @@ impl RateLimitMiddleware {
 
         self.last_sync
             .retain(|_, last| now.duration_since(*last) < max_age);
+    }
+
+    /// A bucket idle this long has refilled completely and can be dropped.
+    fn idle_ttl(&self) -> Duration {
+        let refill = self.config.period.as_std().as_secs_f64() * self.config.burst.max(1) as f64
+            / self.config.average.max(1) as f64;
+        Duration::from_secs_f64(refill.clamp(1.0, 3600.0))
+    }
+
+    /// Seconds until a token is available again (for `Retry-After`).
+    pub fn retry_after_secs(&self) -> u64 {
+        let per_token =
+            self.config.period.as_std().as_secs_f64() / self.config.average.max(1) as f64;
+        per_token.ceil().max(1.0) as u64
     }
 
     /// Get current bucket count (for metrics)
@@ -467,5 +520,53 @@ mod tests {
             limiter.is_allowed(ip);
         }
         assert_eq!(limiter.remaining(ip), 0);
+    }
+
+    #[test]
+    fn period_is_respected() {
+        // 5 per minute, burst 5: after the burst, no refill within a second.
+        let limiter = RateLimitMiddleware::new(RateLimitConfig {
+            average: 5,
+            burst: 5,
+            period: ConfigDuration::from_secs(60),
+            source_criterion: None,
+        });
+        for _ in 0..5 {
+            assert!(limiter.is_allowed_by_key("k"));
+        }
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            !limiter.is_allowed_by_key("k"),
+            "must not refill at average/second"
+        );
+        assert_eq!(limiter.retry_after_secs(), 12);
+    }
+
+    #[test]
+    fn sub_millisecond_refill_is_not_lost() {
+        // 1000/s: tokens accrue at 1/ms; nanosecond math keeps fractions.
+        let limiter = RateLimitMiddleware::new(RateLimitConfig {
+            average: 1000,
+            burst: 1,
+            period: ConfigDuration::from_secs(1),
+            source_criterion: None,
+        });
+        assert!(limiter.is_allowed_by_key("k"));
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(limiter.is_allowed_by_key("k"));
+    }
+
+    #[test]
+    fn zero_average_is_unlimited_and_buckets_are_bounded() {
+        let limiter = RateLimitMiddleware::new(RateLimitConfig {
+            average: 0,
+            burst: 0,
+            period: ConfigDuration::from_secs(1),
+            source_criterion: None,
+        });
+        for _ in 0..100 {
+            assert!(limiter.is_allowed_by_key("k"));
+        }
+        assert_eq!(limiter.bucket_count(), 0);
     }
 }

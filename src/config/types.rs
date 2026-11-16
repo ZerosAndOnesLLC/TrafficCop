@@ -388,8 +388,9 @@ pub struct UdpRouter {
     #[serde(default)]
     pub entry_points: Vec<String>,
 
-    /// Routing rule (ClientIP or catch-all `*`)
-    /// Note: UDP doesn't support SNI since there's no TLS handshake
+    /// Routing rule (TrafficCop extension: ClientIP or `*`). Traefik UDP
+    /// routers have no rule; when omitted the router matches every datagram.
+    #[serde(default)]
     pub rule: String,
 
     /// Service to route to
@@ -750,6 +751,11 @@ pub struct EntryPointHttp {
     /// Default middlewares applied to all routers on this entry point.
     #[serde(default)]
     pub middlewares: Vec<String>,
+
+    /// Clean the request path (dot-segments, duplicate slashes, unneeded
+    /// percent-encoding) before routing. Default: true (Traefik default).
+    #[serde(default)]
+    pub sanitize_path: Option<bool>,
 }
 
 /// Entrypoint-level HTTP redirections (e.g., HTTP to HTTPS).
@@ -1229,8 +1235,8 @@ pub struct ServersTransport {
     #[serde(default)]
     pub insecure_skip_verify: bool,
 
-    /// Root CA certificate files for backend TLS.
-    #[serde(default)]
+    /// Root CA certificate files for backend TLS (replace the system pool).
+    #[serde(default, rename = "rootCAs", alias = "rootCas")]
     pub root_cas: Vec<String>,
 
     /// Client certificates for mutual TLS with backends.
@@ -1246,11 +1252,11 @@ pub struct ServersTransport {
     pub forwarding_timeouts: Option<ForwardingTimeouts>,
 
     /// Disable HTTP/2 for backend connections.
-    #[serde(default)]
+    #[serde(default, rename = "disableHTTP2", alias = "disableHttp2")]
     pub disable_http2: bool,
 
     /// URI to match in the backend peer certificate.
-    #[serde(default)]
+    #[serde(default, rename = "peerCertURI", alias = "peerCertUri")]
     pub peer_cert_uri: Option<String>,
 }
 
@@ -1477,7 +1483,12 @@ pub struct MiddlewareConfig {
     pub in_flight_req: Option<InFlightReqConfig>,
 
     /// Pass TLS client certificate middleware.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "passTLSClientCert",
+        alias = "passTlsClientCert"
+    )]
     pub pass_tls_client_cert: Option<PassTlsClientCertConfig>,
 
     /// Content-Type auto-detection middleware.
@@ -1506,6 +1517,42 @@ pub struct MiddlewareConfig {
 }
 
 impl MiddlewareConfig {
+    /// Names of every middleware type set on this definition. Traefik requires
+    /// exactly one per middleware.
+    pub fn configured_types(&self) -> Vec<&'static str> {
+        [
+            ("rateLimit", self.rate_limit.is_some()),
+            ("ipAllowList", self.ip_allow_list.is_some()),
+            ("ipWhiteList", self.ip_white_list.is_some()),
+            ("ipDenyList", self.ip_deny_list.is_some()),
+            ("headers", self.headers.is_some()),
+            ("basicAuth", self.basic_auth.is_some()),
+            ("digestAuth", self.digest_auth.is_some()),
+            ("forwardAuth", self.forward_auth.is_some()),
+            ("compress", self.compress.is_some()),
+            ("retry", self.retry.is_some()),
+            ("circuitBreaker", self.circuit_breaker.is_some()),
+            ("redirectScheme", self.redirect_scheme.is_some()),
+            ("redirectRegex", self.redirect_regex.is_some()),
+            ("stripPrefix", self.strip_prefix.is_some()),
+            ("stripPrefixRegex", self.strip_prefix_regex.is_some()),
+            ("addPrefix", self.add_prefix.is_some()),
+            ("replacePath", self.replace_path.is_some()),
+            ("replacePathRegex", self.replace_path_regex.is_some()),
+            ("chain", self.chain.is_some()),
+            ("buffering", self.buffering.is_some()),
+            ("inFlightReq", self.in_flight_req.is_some()),
+            ("passTLSClientCert", self.pass_tls_client_cert.is_some()),
+            ("contentType", self.content_type.is_some()),
+            ("grpcWeb", self.grpc_web.is_some()),
+            ("jwt", self.jwt.is_some()),
+            ("errors", self.errors.is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(n, set)| set.then_some(n))
+        .collect()
+    }
+
     /// Get the middleware type name
     pub fn middleware_type(&self) -> &'static str {
         if self.rate_limit.is_some() {
@@ -1621,7 +1668,7 @@ pub struct IpStrategy {
     pub depth: u32,
 
     /// IPs to exclude when extracting client IP.
-    #[serde(default)]
+    #[serde(default, rename = "excludedIPs", alias = "excludedIps")]
     pub excluded_ips: Vec<String>,
 
     /// IPv6 subnet mask size for grouping clients.

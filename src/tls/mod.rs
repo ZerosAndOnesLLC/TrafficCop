@@ -4,6 +4,8 @@
 pub mod acme;
 /// Mutual TLS client certificate authentication.
 pub mod mtls;
+/// Traefik `tls.options` (versions, ciphers, client auth, sniStrict) per SNI.
+pub mod options;
 mod resolver;
 
 /// Re-exports from the ACME submodule for certificate automation.
@@ -13,6 +15,8 @@ pub use acme::{
 };
 /// Re-exports for mutual TLS client authentication.
 pub use mtls::{ClientAuthMode, ClientCertInfo, MtlsConfigBuilder};
+/// Per-entrypoint, per-SNI TLS option selection.
+pub use options::TlsOptionSet;
 /// SNI-based certificate resolver with static, ACME, and wildcard support.
 pub use resolver::CertificateResolver;
 

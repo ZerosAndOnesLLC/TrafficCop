@@ -3,38 +3,48 @@ use hyper::header::{AUTHORIZATION, HeaderValue, WWW_AUTHENTICATE};
 use hyper::{Request, Response, StatusCode};
 use std::collections::HashMap;
 
-/// Basic authentication middleware
-/// Supports htpasswd-style password format: user:password (plaintext) or user:$apr1$... (hashed)
+/// Basic authentication middleware (Traefik basicAuth).
+/// Users are htpasswd entries `user:hash` with MD5-crypt (`$apr1$`, `$1$`),
+/// SHA1 (`{SHA}`) or bcrypt (`$2a$`/`$2b$`/`$2y$`) hashes. Plaintext and
+/// unknown formats are rejected at load (as in Traefik).
 pub struct BasicAuthMiddleware {
-    /// Map of username -> password (plaintext or hash)
+    /// Map of username -> password hash
     users: HashMap<String, String>,
     realm: String,
     www_authenticate: HeaderValue,
 }
 
 impl BasicAuthMiddleware {
-    /// Create from config, parsing user:password entries.
-    pub fn new(config: BasicAuthConfig) -> Self {
-        let users: HashMap<String, String> = config
-            .users
-            .iter()
-            .filter_map(|entry| {
-                let mut parts = entry.splitn(2, ':');
-                let user = parts.next()?.to_string();
-                let pass = parts.next()?.to_string();
-                Some((user, pass))
-            })
-            .collect();
+    /// Create from config. Malformed entries and unsupported hash formats are errors.
+    pub fn new(config: BasicAuthConfig) -> Result<Self, String> {
+        if config.users.is_empty() {
+            return Err(if config.users_file.is_some() {
+                "basicAuth: usersFile is not supported yet; use users".to_string()
+            } else {
+                "basicAuth: at least one user is required".to_string()
+            });
+        }
+        let mut users = HashMap::new();
+        for entry in &config.users {
+            let Some((user, hash)) = entry.split_once(':') else {
+                return Err("basicAuth: user entry must be 'user:hash'".to_string());
+            };
+            if user.is_empty() {
+                return Err("basicAuth: empty username".to_string());
+            }
+            validate_hash(hash).map_err(|e| format!("basicAuth user '{user}': {e}"))?;
+            users.insert(user.to_string(), hash.to_string());
+        }
 
-        let realm = config.realm.unwrap_or_else(|| "Restricted".to_string());
-        let www_authenticate =
-            HeaderValue::from_str(&format!("Basic realm=\"{}\"", realm)).unwrap();
+        let realm = config.realm.unwrap_or_else(|| "traefik".to_string());
+        let www_authenticate = HeaderValue::from_str(&format!("Basic realm=\"{}\"", realm))
+            .map_err(|_| format!("basicAuth: invalid realm '{realm}'"))?;
 
-        Self {
+        Ok(Self {
             users,
             realm,
             www_authenticate,
-        }
+        })
     }
 
     /// Check if request is authenticated
@@ -100,51 +110,75 @@ impl BasicAuthMiddleware {
     }
 }
 
-/// Verify a password against an htpasswd-style stored credential.
-/// Supports Apache MD5 (`$apr1$`), bcrypt (`$2a$`/`$2b$`/`$2y$`/`$2x$`),
-/// SHA1 (`{SHA}`), and plaintext (constant-time compare).
-fn verify_password(stored: &str, password: &str) -> bool {
-    if let Some(rest) = stored.strip_prefix("$apr1$") {
-        // $apr1$<salt, up to 8 chars>$<22-char hash>
-        let mut parts = rest.splitn(2, '$');
-        match (parts.next(), parts.next()) {
-            (Some(salt), Some(hash)) if !salt.is_empty() && salt.len() <= 8 && !hash.is_empty() => {
-                let computed = md5_apr1_encode(password.as_bytes(), salt.as_bytes());
-                return constant_time_compare(&computed, hash);
-            }
-            _ => {
-                tracing::warn!("Malformed $apr1$ hash in basicAuth users; rejecting login");
-                return false;
-            }
-        }
+/// Check an htpasswd hash is in a supported, well-formed format.
+fn validate_hash(stored: &str) -> Result<(), String> {
+    let md5 = |rest: &str| {
+        matches!(rest.split_once('$'), Some((salt, hash))
+            if !salt.is_empty() && salt.len() <= 8 && hash.len() == 22)
+    };
+    let ok = if let Some(rest) = stored.strip_prefix("$apr1$") {
+        md5(rest)
+    } else if let Some(rest) = stored.strip_prefix("$1$") {
+        md5(rest)
+    } else if stored.starts_with("$2") {
+        stored.parse::<bcrypt::HashParts>().is_ok()
+    } else if let Some(sha) = stored.strip_prefix("{SHA}") {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode(sha)
+            .is_ok_and(|d| d.len() == 20)
+    } else {
+        return Err(
+            "unsupported password format (use htpasswd MD5 $apr1$/$1$, {SHA} or bcrypt; plaintext is not accepted)"
+                .to_string(),
+        );
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err("malformed password hash".to_string())
     }
+}
 
+/// Verify a password against an htpasswd hash. Unknown formats never match.
+fn verify_password(stored: &str, password: &str) -> bool {
+    let md5 = |rest: &str, magic: &[u8]| match rest.split_once('$') {
+        Some((salt, hash)) if !salt.is_empty() && salt.len() <= 8 && !hash.is_empty() => {
+            let computed = md5_crypt_encode(password.as_bytes(), salt.as_bytes(), magic);
+            constant_time_compare(&computed, hash)
+        }
+        _ => false,
+    };
+
+    if let Some(rest) = stored.strip_prefix("$apr1$") {
+        return md5(rest, b"$apr1$");
+    }
+    if let Some(rest) = stored.strip_prefix("$1$") {
+        return md5(rest, b"$1$");
+    }
     if stored.starts_with("$2") {
         // bcrypt::verify returns Err on malformed hashes — treat as no match
         return bcrypt::verify(password, stored).unwrap_or(false);
     }
-
     if let Some(sha_hash) = stored.strip_prefix("{SHA}") {
         use base64::Engine;
         let digest = sha1_smol::Sha1::from(password.as_bytes()).digest().bytes();
         let computed = base64::engine::general_purpose::STANDARD.encode(digest);
         return constant_time_compare(&computed, sha_hash);
     }
-
-    // Plaintext credential
-    constant_time_compare(stored, password)
+    false
 }
 
-/// Apache MD5-crypt (`$apr1$`), the htpasswd default format. This is the
-/// standard APR1 key-stretching construction over the audited RustCrypto
-/// `md-5` primitive (1000 iterations + crypt-alphabet encoding), validated
-/// against htpasswd-generated vectors in tests.
-fn md5_apr1_encode(password: &[u8], salt: &[u8]) -> String {
+/// MD5-crypt (`$1$`, and Apache's `$apr1$` variant which differs only in
+/// the magic string): the standard key-stretching construction over the
+/// audited RustCrypto `md-5` primitive (1000 iterations + crypt-alphabet
+/// encoding), validated against openssl/htpasswd vectors in tests.
+fn md5_crypt_encode(password: &[u8], salt: &[u8], magic: &[u8]) -> String {
     use md5::{Digest, Md5};
 
     let mut ctx = Md5::new();
     ctx.update(password);
-    ctx.update(b"$apr1$");
+    ctx.update(magic);
     ctx.update(salt);
 
     let mut ctx1 = Md5::new();
@@ -269,7 +303,10 @@ mod tests {
 
     fn test_config() -> BasicAuthConfig {
         BasicAuthConfig {
-            users: vec!["admin:secret123".to_string(), "user:password".to_string()],
+            users: vec![
+                "admin:$apr1$Xy12Ab34$CMRwyEbD4qD9acmonDTWw.".to_string(),
+                "user:$1$saltsalt$qjXMvbEw8oaL.CzflDtaK/".to_string(),
+            ],
             users_file: None,
             realm: Some("Test Realm".to_string()),
             header_field: None,
@@ -279,7 +316,7 @@ mod tests {
 
     #[test]
     fn test_valid_credentials() {
-        let middleware = BasicAuthMiddleware::new(test_config());
+        let middleware = BasicAuthMiddleware::new(test_config()).unwrap();
 
         // admin:secret123 in base64 = YWRtaW46c2VjcmV0MTIz
         let req = Request::builder()
@@ -292,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_invalid_password() {
-        let middleware = BasicAuthMiddleware::new(test_config());
+        let middleware = BasicAuthMiddleware::new(test_config()).unwrap();
 
         // admin:wrongpass in base64 = YWRtaW46d3JvbmdwYXNz
         let req = Request::builder()
@@ -305,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_unknown_user() {
-        let middleware = BasicAuthMiddleware::new(test_config());
+        let middleware = BasicAuthMiddleware::new(test_config()).unwrap();
 
         // unknown:password in base64 = dW5rbm93bjpwYXNzd29yZA==
         let req = Request::builder()
@@ -318,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_no_auth_header() {
-        let middleware = BasicAuthMiddleware::new(test_config());
+        let middleware = BasicAuthMiddleware::new(test_config()).unwrap();
 
         let req = Request::builder().body(()).unwrap();
 
@@ -327,7 +364,7 @@ mod tests {
 
     #[test]
     fn test_wrong_auth_type() {
-        let middleware = BasicAuthMiddleware::new(test_config());
+        let middleware = BasicAuthMiddleware::new(test_config()).unwrap();
 
         let req = Request::builder()
             .header(AUTHORIZATION, "Bearer token123")
@@ -339,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_unauthorized_response() {
-        let middleware = BasicAuthMiddleware::new(test_config());
+        let middleware = BasicAuthMiddleware::new(test_config()).unwrap();
 
         let response = middleware.unauthorized_response();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
@@ -400,5 +437,35 @@ mod tests {
             "$2z$05$nC6nErr9XZJuMJ57WyCob.EuZEjylDt2KaHfbfOtyb.EgL1I2jCVa",
             "password"
         ));
+    }
+
+    #[test]
+    fn test_md5_crypt_variant() {
+        let hash = "$1$saltsalt$qjXMvbEw8oaL.CzflDtaK/";
+        assert!(verify_password(hash, "password"));
+        assert!(!verify_password(hash, "wrong"));
+    }
+
+    #[test]
+    fn plaintext_and_unknown_formats_are_rejected() {
+        // Unknown formats never verify, even when the "password" equals the stored value.
+        for stored in ["secret", "$6$salt$abc", "$5$x$y"] {
+            assert!(!verify_password(stored, stored));
+        }
+        let mk = |u: &str| {
+            BasicAuthMiddleware::new(BasicAuthConfig {
+                users: vec![u.to_string()],
+                users_file: None,
+                realm: None,
+                header_field: None,
+                remove_header: false,
+            })
+        };
+        assert!(mk("admin:secret123").is_err());
+        assert!(mk("admin:$6$rounds=5000$salt$hash").is_err());
+        assert!(mk("admin:$apr1$short").is_err());
+        assert!(mk("admin:{SHA}notbase64!").is_err());
+        assert!(mk("nocolon").is_err());
+        assert!(mk("admin:$apr1$Xy12Ab34$CMRwyEbD4qD9acmonDTWw.").is_ok());
     }
 }

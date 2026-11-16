@@ -1,5 +1,5 @@
 use crate::config::EntryPoint;
-use crate::udp::{UdpProxy, UdpRouter, UdpServiceManager};
+use crate::udp::{UdpMiddlewares, UdpProxy, UdpRouter, UdpServiceManager};
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -13,6 +13,7 @@ pub struct UdpListener {
     entrypoint: EntryPoint,
     router: Arc<UdpRouter>,
     services: Arc<UdpServiceManager>,
+    middlewares: Arc<UdpMiddlewares>,
 }
 
 impl UdpListener {
@@ -22,12 +23,14 @@ impl UdpListener {
         entrypoint: EntryPoint,
         router: Arc<UdpRouter>,
         services: Arc<UdpServiceManager>,
+        middlewares: Arc<UdpMiddlewares>,
     ) -> Self {
         Self {
             name,
             entrypoint,
             router,
             services,
+            middlewares,
         }
     }
 
@@ -48,6 +51,7 @@ impl UdpListener {
         let proxy = Arc::new(UdpProxy::new(
             Arc::clone(&self.router),
             Arc::clone(&self.services),
+            Arc::clone(&self.middlewares),
         ));
 
         proxy.run(Arc::new(socket), &self.name, shutdown).await;

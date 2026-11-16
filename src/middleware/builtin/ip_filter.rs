@@ -1,276 +1,161 @@
 use crate::config::{IpAllowListConfig, IpDenyListConfig, IpStrategy};
+use crate::middleware::source::{SourceExtractor, parse_net};
+use hyper::Request;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
+
+/// Parse `sourceRange`; empty or invalid entries are configuration errors
+/// (an allow-list must never silently become allow-all).
+fn ranges(source_range: &[String], what: &str) -> Result<Vec<IpNetwork>, String> {
+    if source_range.is_empty() {
+        return Err(format!("{what}: sourceRange must not be empty"));
+    }
+    source_range
+        .iter()
+        .map(|s| parse_net(s).map_err(|e| format!("{what}: {e}")))
+        .collect()
+}
+
+fn extractor(strategy: Option<&IpStrategy>, what: &str) -> Result<SourceExtractor, String> {
+    SourceExtractor::from_ip_strategy_opt(strategy).map_err(|e| format!("{what}: {e}"))
+}
+
+/// Client IP per the configured ipStrategy (remote address by default).
+fn client_ip<B>(x: &SourceExtractor, req: &Request<B>) -> Option<IpAddr> {
+    x.extract(req)?.parse().ok()
+}
 
 /// IP allowlist middleware (Traefik ipAllowList)
 pub struct IpAllowListMiddleware {
     source_range: Vec<IpNetwork>,
-    ip_strategy: Option<IpStrategy>,
-    /// Pre-parsed excluded IP networks (avoids parse_network() per request)
-    excluded_networks: Vec<IpNetwork>,
+    extractor: SourceExtractor,
     reject_status_code: u16,
 }
 
 impl IpAllowListMiddleware {
-    /// Create from config, parsing CIDR ranges and IP strategy.
-    pub fn new(config: &IpAllowListConfig) -> Self {
-        let source_range = config
-            .source_range
-            .iter()
-            .filter_map(|s| parse_network(s))
-            .collect();
-
-        let excluded_networks = config
-            .ip_strategy
-            .as_ref()
-            .map(|s| {
-                s.excluded_ips
-                    .iter()
-                    .filter_map(|e| parse_network(e))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        Self {
-            source_range,
-            ip_strategy: config.ip_strategy.clone(),
-            excluded_networks,
+    /// Create from config. Invalid or empty ranges are errors.
+    pub fn new(config: &IpAllowListConfig) -> Result<Self, String> {
+        Ok(Self {
+            source_range: ranges(&config.source_range, "ipAllowList")?,
+            extractor: extractor(config.ip_strategy.as_ref(), "ipAllowList")?,
             reject_status_code: config.reject_status_code.unwrap_or(403),
-        }
+        })
     }
 
-    /// Check if an IP address is allowed
+    /// Whether `ip` is in the allowed ranges.
     #[inline]
     pub fn is_allowed(&self, ip: IpAddr) -> bool {
-        if self.source_range.is_empty() {
-            return true; // No rules means allow all
-        }
+        self.source_range.iter().any(|n| n.contains(ip))
+    }
 
-        for network in &self.source_range {
-            if network.contains(ip) {
-                return true;
-            }
-        }
-
-        false
+    /// Whether the request is allowed. A client IP that cannot be determined
+    /// (e.g. ipStrategy depth beyond X-Forwarded-For) is rejected.
+    pub fn allows<B>(&self, req: &Request<B>) -> bool {
+        client_ip(&self.extractor, req).is_some_and(|ip| self.is_allowed(ip))
     }
 
     /// Get the reject status code
     pub fn reject_status_code(&self) -> u16 {
         self.reject_status_code
     }
-
-    /// Get IP from X-Forwarded-For based on strategy
-    pub fn get_client_ip(&self, forwarded_for: Option<&str>, remote_addr: IpAddr) -> IpAddr {
-        if let Some(strategy) = &self.ip_strategy
-            && let Some(xff) = forwarded_for
-        {
-            let ips: Vec<&str> = xff.split(',').map(|s| s.trim()).collect();
-            let depth = strategy.depth as usize;
-
-            if depth < ips.len() {
-                let idx = ips.len() - 1 - depth;
-                if let Ok(ip) = ips[idx].parse::<IpAddr>() {
-                    let should_exclude = self.excluded_networks.iter().any(|net| net.contains(ip));
-                    if !should_exclude {
-                        return ip;
-                    }
-                }
-            }
-        }
-
-        remote_addr
-    }
-
-    /// Check if filter has any rules configured
-    pub fn has_rules(&self) -> bool {
-        !self.source_range.is_empty()
-    }
 }
 
-/// IP denylist middleware (Traefik ipDenyList)
+/// IP denylist middleware (TrafficCop extension)
 pub struct IpDenyListMiddleware {
     source_range: Vec<IpNetwork>,
-    ip_strategy: Option<IpStrategy>,
-    /// Pre-parsed excluded IP networks (avoids parse_network() per request)
-    excluded_networks: Vec<IpNetwork>,
+    extractor: SourceExtractor,
 }
 
 impl IpDenyListMiddleware {
-    /// Create from config, parsing CIDR ranges and IP strategy.
-    pub fn new(config: &IpDenyListConfig) -> Self {
-        let source_range = config
-            .source_range
-            .iter()
-            .filter_map(|s| parse_network(s))
-            .collect();
-
-        let excluded_networks = config
-            .ip_strategy
-            .as_ref()
-            .map(|s| {
-                s.excluded_ips
-                    .iter()
-                    .filter_map(|e| parse_network(e))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        Self {
-            source_range,
-            ip_strategy: config.ip_strategy.clone(),
-            excluded_networks,
-        }
+    /// Create from config. Invalid or empty ranges are errors.
+    pub fn new(config: &IpDenyListConfig) -> Result<Self, String> {
+        Ok(Self {
+            source_range: ranges(&config.source_range, "ipDenyList")?,
+            extractor: extractor(config.ip_strategy.as_ref(), "ipDenyList")?,
+        })
     }
 
-    /// Check if an IP address is denied
+    /// Whether `ip` is in the denied ranges.
     #[inline]
     pub fn is_denied(&self, ip: IpAddr) -> bool {
-        for network in &self.source_range {
-            if network.contains(ip) {
-                return true;
-            }
-        }
-
-        false
+        self.source_range.iter().any(|n| n.contains(ip))
     }
 
-    /// Get IP from X-Forwarded-For based on strategy
-    pub fn get_client_ip(&self, forwarded_for: Option<&str>, remote_addr: IpAddr) -> IpAddr {
-        if let Some(strategy) = &self.ip_strategy
-            && let Some(xff) = forwarded_for
-        {
-            let ips: Vec<&str> = xff.split(',').map(|s| s.trim()).collect();
-            let depth = strategy.depth as usize;
-
-            if depth < ips.len() {
-                let idx = ips.len() - 1 - depth;
-                if let Ok(ip) = ips[idx].parse::<IpAddr>() {
-                    let should_exclude = self.excluded_networks.iter().any(|net| net.contains(ip));
-                    if !should_exclude {
-                        return ip;
-                    }
-                }
-            }
-        }
-
-        remote_addr
+    /// Whether the request must be rejected (denied IP, or IP undeterminable).
+    pub fn denies<B>(&self, req: &Request<B>) -> bool {
+        client_ip(&self.extractor, req).is_none_or(|ip| self.is_denied(ip))
     }
-
-    /// Check if filter has any rules configured
-    pub fn has_rules(&self) -> bool {
-        !self.source_range.is_empty()
-    }
-}
-
-/// Parse an IP address or CIDR notation into IpNetwork
-fn parse_network(s: &str) -> Option<IpNetwork> {
-    // Try parsing as CIDR first
-    if let Ok(network) = s.parse::<IpNetwork>() {
-        return Some(network);
-    }
-
-    // Try parsing as single IP address
-    if let Ok(ip) = s.parse::<IpAddr>() {
-        return match ip {
-            IpAddr::V4(v4) => Some(IpNetwork::V4(ipnetwork::Ipv4Network::new(v4, 32).ok()?)),
-            IpAddr::V6(v6) => Some(IpNetwork::V6(ipnetwork::Ipv6Network::new(v6, 128).ok()?)),
-        };
-    }
-
-    tracing::warn!("Failed to parse IP filter rule: {}", s);
-    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::middleware::RequestContext;
 
-    #[test]
-    fn test_allow_single_ip() {
-        let config = IpAllowListConfig {
-            source_range: vec!["192.168.1.100".to_string()],
-            ip_strategy: None,
+    fn allow(
+        ranges: &[&str],
+        strategy: Option<IpStrategy>,
+    ) -> Result<IpAllowListMiddleware, String> {
+        IpAllowListMiddleware::new(&IpAllowListConfig {
+            source_range: ranges.iter().map(|s| s.to_string()).collect(),
+            ip_strategy: strategy,
             reject_status_code: None,
-        };
-        let filter = IpAllowListMiddleware::new(&config);
+        })
+    }
 
-        assert!(filter.is_allowed("192.168.1.100".parse().unwrap()));
-        assert!(!filter.is_allowed("192.168.1.101".parse().unwrap()));
+    fn req(peer: &str, xff: Option<&str>) -> Request<()> {
+        let mut b = Request::builder().uri("/");
+        if let Some(x) = xff {
+            b = b.header("x-forwarded-for", x);
+        }
+        let mut r = b.body(()).unwrap();
+        r.extensions_mut().insert(RequestContext {
+            remote_addr: format!("{peer}:1").parse().unwrap(),
+            is_tls: false,
+            client_certs: None,
+        });
+        r
     }
 
     #[test]
-    fn test_allow_cidr() {
-        let config = IpAllowListConfig {
-            source_range: vec!["10.0.0.0/8".to_string()],
-            ip_strategy: None,
-            reject_status_code: None,
-        };
-        let filter = IpAllowListMiddleware::new(&config);
-
-        assert!(filter.is_allowed("10.0.0.1".parse().unwrap()));
-        assert!(filter.is_allowed("10.255.255.255".parse().unwrap()));
-        assert!(!filter.is_allowed("11.0.0.1".parse().unwrap()));
+    fn ranges_and_ipv6() {
+        let m = allow(&["192.168.1.100", "10.0.0.0/8", "2001:db8::/32"], None).unwrap();
+        assert!(m.is_allowed("192.168.1.100".parse().unwrap()));
+        assert!(m.is_allowed("10.200.0.1".parse().unwrap()));
+        assert!(m.is_allowed("2001:db8::1".parse().unwrap()));
+        assert!(!m.is_allowed("192.168.1.101".parse().unwrap()));
     }
 
     #[test]
-    fn test_deny_cidr() {
-        let config = IpDenyListConfig {
-            source_range: vec!["192.168.0.0/16".to_string()],
-            ip_strategy: None,
-        };
-        let filter = IpDenyListMiddleware::new(&config);
-
-        assert!(filter.is_denied("192.168.1.1".parse().unwrap()));
-        assert!(!filter.is_denied("10.0.0.1".parse().unwrap()));
+    fn invalid_or_empty_ranges_are_errors() {
+        assert!(allow(&["10.0.0.0/33"], None).is_err());
+        assert!(allow(&["10.0.0.0/8", "nope"], None).is_err());
+        assert!(allow(&[], None).is_err());
     }
 
     #[test]
-    fn test_ipv6() {
-        let config = IpAllowListConfig {
-            source_range: vec!["::1".to_string(), "2001:db8::/32".to_string()],
-            ip_strategy: None,
-            reject_status_code: None,
+    fn ip_strategy_depth_and_failure() {
+        let s = IpStrategy {
+            depth: 2,
+            excluded_ips: vec![],
+            ipv6_subnet: None,
         };
-        let filter = IpAllowListMiddleware::new(&config);
-
-        assert!(filter.is_allowed("::1".parse().unwrap()));
-        assert!(filter.is_allowed("2001:db8::1".parse().unwrap()));
-        assert!(!filter.is_allowed("2001:db9::1".parse().unwrap()));
-    }
-
-    #[test]
-    fn test_empty_allowlist_allows_all() {
-        let config = IpAllowListConfig {
-            source_range: vec![],
-            ip_strategy: None,
-            reject_status_code: None,
-        };
-        let filter = IpAllowListMiddleware::new(&config);
-
-        assert!(filter.is_allowed("1.2.3.4".parse().unwrap()));
-    }
-
-    #[test]
-    fn test_ip_strategy_depth() {
-        let config = IpAllowListConfig {
-            source_range: vec!["10.0.0.0/8".to_string()],
-            ip_strategy: Some(IpStrategy {
-                depth: 1,
-                excluded_ips: vec![],
-                ipv6_subnet: None,
-            }),
-            reject_status_code: None,
-        };
-        let filter = IpAllowListMiddleware::new(&config);
-
-        // X-Forwarded-For: client, proxy1, proxy2
-        // depth=1 means skip proxy2, use proxy1
-        let client_ip = filter.get_client_ip(
-            Some("10.0.0.1, 192.168.1.1, 172.16.0.1"),
-            "127.0.0.1".parse().unwrap(),
+        let m = allow(&["12.0.0.1"], Some(s)).unwrap();
+        assert!(m.allows(&req("1.1.1.1", Some("10.0.0.1,11.0.0.1,12.0.0.1,13.0.0.1"))));
+        assert!(
+            !m.allows(&req("12.0.0.1", Some("13.0.0.1"))),
+            "depth beyond XFF rejects"
         );
+    }
 
-        assert_eq!(client_ip, "192.168.1.1".parse::<IpAddr>().unwrap());
+    #[test]
+    fn deny_list() {
+        let d = IpDenyListMiddleware::new(&IpDenyListConfig {
+            source_range: vec!["10.0.0.0/8".into()],
+            ip_strategy: None,
+        })
+        .unwrap();
+        assert!(d.denies(&req("10.1.1.1", None)));
+        assert!(!d.denies(&req("8.8.8.8", None)));
     }
 }

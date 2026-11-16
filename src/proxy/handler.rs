@@ -10,12 +10,6 @@ use hyper::header::{
     CONNECTION, CONTENT_TYPE, HOST, HeaderName, HeaderValue, TRANSFER_ENCODING, UPGRADE,
 };
 use hyper::{Request, Response, StatusCode, Uri, body::Incoming};
-use hyper_rustls::HttpsConnectorBuilder;
-use hyper_util::client::legacy::Client;
-use hyper_util::client::legacy::connect::HttpConnector;
-use hyper_util::rt::TokioExecutor;
-use rustls::ClientConfig;
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -23,108 +17,21 @@ use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
 use super::grpc;
+use super::transport::{BackendClients, TransportRegistry};
 
 fn hop_by_hop_headers() -> &'static [HeaderName] {
     static HEADERS: &[HeaderName] = &[CONNECTION, TRANSFER_ENCODING, UPGRADE];
     HEADERS
 }
 
-/// TLS certificate verifier that accepts all certificates (insecureSkipVerify).
-#[derive(Debug)]
-struct NoVerifier;
-
-impl ServerCertVerifier for NoVerifier {
-    fn verify_server_cert(
-        &self,
-        _: &rustls::pki_types::CertificateDer<'_>,
-        _: &[rustls::pki_types::CertificateDer<'_>],
-        _: &rustls::pki_types::ServerName<'_>,
-        _: &[u8],
-        _: rustls::pki_types::UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _: &[u8],
-        _: &rustls::pki_types::CertificateDer<'_>,
-        _: &rustls::DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _: &[u8],
-        _: &rustls::pki_types::CertificateDer<'_>,
-        _: &rustls::DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        rustls::crypto::ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
-}
-
-/// Type alias for the HTTPS-capable connector used by proxy clients.
-type HttpsConnector = hyper_rustls::HttpsConnector<HttpConnector>;
-
 /// Core proxy handler that routes incoming requests to backend services.
-pub struct ProxyHandler {
-    client: Client<HttpsConnector, BoxBody<Bytes, hyper::Error>>,
-    h2_client: Client<HttpsConnector, BoxBody<Bytes, hyper::Error>>,
-}
+pub struct ProxyHandler;
 
 impl ProxyHandler {
-    /// Create a new proxy handler with HTTP/1.1 and HTTP/2 client pools.
+    /// Create a new proxy handler. Backend clients live in the
+    /// hot-reloadable [`TransportRegistry`].
     pub fn new() -> Self {
-        let insecure_tls = ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoVerifier))
-            .with_no_client_auth();
-
-        let mut http = HttpConnector::new();
-        http.set_nodelay(true);
-        http.set_reuse_address(true);
-        http.enforce_http(false);
-
-        let connector = HttpsConnectorBuilder::new()
-            .with_tls_config(insecure_tls.clone())
-            .https_or_http()
-            .enable_all_versions()
-            .wrap_connector(http);
-
-        let client = Client::builder(TokioExecutor::new())
-            .pool_idle_timeout(Duration::from_secs(90))
-            .pool_max_idle_per_host(256)
-            .retry_canceled_requests(true)
-            .set_host(true)
-            .build(connector);
-
-        let mut h2_http = HttpConnector::new();
-        h2_http.set_nodelay(true);
-        h2_http.set_reuse_address(true);
-        h2_http.enforce_http(false);
-
-        let h2_connector = HttpsConnectorBuilder::new()
-            .with_tls_config(insecure_tls)
-            .https_or_http()
-            .enable_all_versions()
-            .wrap_connector(h2_http);
-
-        let h2_client = Client::builder(TokioExecutor::new())
-            .pool_idle_timeout(Duration::from_secs(90))
-            .pool_max_idle_per_host(256)
-            .retry_canceled_requests(true)
-            .set_host(true)
-            .http2_only(true)
-            .build(h2_connector);
-
-        Self { client, h2_client }
+        Self
     }
 
     /// Route and forward an incoming request through middleware to the matched backend.
@@ -137,6 +44,7 @@ impl ProxyHandler {
         router: &Router,
         services: &ServiceManager,
         middleware_registry: &MiddlewareRegistry,
+        transports: &TransportRegistry,
         passive_health: &Arc<PassiveHealthChecker>,
         is_tls: bool,
         access_log: &AccessLogWriter,
@@ -157,7 +65,9 @@ impl ProxyHandler {
             .or(host_from_uri.as_deref());
 
         // Use references directly - no allocations
-        let path = req.uri().path();
+        // Rules match the percent-decoded path (Go/Traefik semantics).
+        let decoded_path = super::path::decode(req.uri().path());
+        let path: &str = &decoded_path;
         let query = req.uri().query();
         let method = req.method();
 
@@ -195,6 +105,7 @@ impl ProxyHandler {
             query,
             Some(method.as_str()),
             req.headers(),
+            is_tls,
         ) {
             Some(route) => route,
             None => {
@@ -227,11 +138,42 @@ impl ProxyHandler {
         );
 
         // Resolve middleware chain for this route
-        let mw_instances = middleware_registry.resolve(route_middlewares);
+        // Fail closed: a route never runs with a configured middleware missing.
+        let ep_mws = router.entrypoint_middlewares(entrypoint);
+        let resolved = if ep_mws.is_empty() {
+            middleware_registry.resolve(route_middlewares)
+        } else {
+            middleware_registry.resolve(ep_mws).and_then(|mut v| {
+                v.extend(middleware_registry.resolve(route_middlewares)?);
+                Ok(v)
+            })
+        };
+        let mw_instances = match resolved {
+            Ok(m) => m,
+            Err(e) => {
+                error!("Route '{}' middleware resolution failed: {}", route_name, e);
+                let response = Self::error_response_maybe_grpc(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal Server Error",
+                    is_grpc,
+                );
+                let entry = AccessLogBuilder::new(remote_addr, &log_method, &log_path, "HTTP/1.1")
+                    .host(log_host.as_deref())
+                    .query(log_query.as_deref())
+                    .user_agent(log_user_agent.as_deref())
+                    .referer(log_referer.as_deref())
+                    .forwarded_for(log_xff.as_deref())
+                    .tls(is_tls)
+                    .finish(response.status().as_u16(), None, None, None, None);
+                access_log.log(&entry);
+                return Ok(response);
+            }
+        };
 
         let response = if mw_instances.is_empty() {
             // No middleware — execute backend forwarding directly
             self.forward_to_backend(
+                transports,
                 req,
                 remote_addr,
                 service_name,
@@ -251,8 +193,7 @@ impl ProxyHandler {
                 .collect();
 
             let fwd = ForwardEndpoint {
-                client: &self.client,
-                h2_client: &self.h2_client,
+                clients: transports.for_service(service_name),
                 remote_addr,
                 service_name: service_name.clone(),
                 services,
@@ -297,6 +238,7 @@ impl ProxyHandler {
     #[allow(clippy::too_many_arguments)]
     async fn forward_to_backend(
         &self,
+        transports: &TransportRegistry,
         req: Request<Incoming>,
         remote_addr: SocketAddr,
         service_name: &str,
@@ -308,8 +250,7 @@ impl ProxyHandler {
         start: Instant,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
         Self::forward_to_backend_inner(
-            &self.client,
-            &self.h2_client,
+            transports.for_service(service_name),
             req,
             remote_addr,
             service_name,
@@ -326,8 +267,7 @@ impl ProxyHandler {
     /// Inner forwarding logic shared between direct and middleware-chained paths
     #[allow(clippy::too_many_arguments)]
     async fn forward_to_backend_inner(
-        client: &Client<HttpsConnector, BoxBody<Bytes, hyper::Error>>,
-        h2_client: &Client<HttpsConnector, BoxBody<Bytes, hyper::Error>>,
+        clients: &BackendClients,
         req: Request<Incoming>,
         remote_addr: SocketAddr,
         service_name: &str,
@@ -390,8 +330,13 @@ impl ProxyHandler {
         // Check for WebSocket upgrade (not applicable for HTTP/2 backends)
         if !use_h2 && super::websocket::is_websocket_upgrade(&req) {
             debug!("Handling WebSocket upgrade to {}", backend_url);
-            return super::websocket::handle_websocket_upgrade(req, &backend_url, remote_addr)
-                .await;
+            return super::websocket::handle_websocket_upgrade(
+                req,
+                &backend_url,
+                remote_addr,
+                clients,
+            )
+            .await;
         }
 
         // Build the proxied request — rewrite h2c:// to http:// for the actual connection
@@ -414,7 +359,7 @@ impl ProxyHandler {
                 }
             };
 
-        let proxied_req =
+        let mut proxied_req =
             match Self::build_proxied_request(req, backend_uri, remote_addr, host, is_tls, is_grpc)
             {
                 Ok(r) => r,
@@ -428,20 +373,29 @@ impl ProxyHandler {
                 }
             };
 
+        // The client-side protocol says nothing about the backend's: tag the
+        // request for the client actually used, or hyper rejects an HTTP/2
+        // request on an HTTP/1 connection (UserUnsupportedVersion -> 502).
+        *proxied_req.version_mut() = if use_h2 {
+            hyper::Version::HTTP_2
+        } else {
+            hyper::Version::HTTP_11
+        };
+
         // Select client: HTTP/2 for gRPC and h2c backends, HTTP/1.1 otherwise
         let selected_client = if use_h2 {
             debug!("Using HTTP/2 client for backend: {}", backend_url);
-            h2_client
+            &clients.h2
         } else {
-            client
+            &clients.http1
         };
 
-        // Forward with timeout
-        let request_timeout = if is_grpc {
+        // Forward with timeout (serversTransport responseHeaderTimeout wins)
+        let request_timeout = clients.response_header_timeout.unwrap_or(if is_grpc {
             Duration::from_secs(300)
         } else {
             Duration::from_secs(30)
-        };
+        });
         let backend_future = selected_client.request(proxied_req);
 
         match timeout(request_timeout, backend_future).await {
@@ -759,8 +713,7 @@ impl Middleware for ArcMiddleware {
 
 /// Terminal endpoint for the middleware chain — forwards the request to the backend
 struct ForwardEndpoint<'a> {
-    client: &'a Client<HttpsConnector, BoxBody<Bytes, hyper::Error>>,
-    h2_client: &'a Client<HttpsConnector, BoxBody<Bytes, hyper::Error>>,
+    clients: &'a BackendClients,
     remote_addr: SocketAddr,
     service_name: String,
     services: &'a ServiceManager,
@@ -777,8 +730,7 @@ impl Endpoint for ForwardEndpoint<'_> {
         req: Request<Incoming>,
     ) -> BoxFuture<'_, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(ProxyHandler::forward_to_backend_inner(
-            self.client,
-            self.h2_client,
+            self.clients,
             req,
             self.remote_addr,
             &self.service_name,

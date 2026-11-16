@@ -2834,7 +2834,7 @@ dependencies = [
 
 [[package]]
 name = "trafficcop"
-version = "1.5.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2866,6 +2866,7 @@ dependencies = [
  "reqwest",
  "ring",
  "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "serde_norway",
@@ -2878,6 +2879,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "webpki-root-certs",
  "x509-parser",
 ]
 

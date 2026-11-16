@@ -1,15 +1,13 @@
 use crate::config::Config;
-use ipnetwork::IpNetwork;
+use crate::tcp::rule::{ConnInfo, TcpRule};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use tracing::debug;
 
-/// UDP router for matching datagrams to services
+/// UDP router (TrafficCop extension: Traefik UDP routers have no rule).
 pub struct UdpRouter {
-    /// Routers by entrypoint
+    /// Routes per entrypoint, in precedence order.
     routers: HashMap<String, Vec<UdpRoute>>,
-    /// Catch-all routers (rule = "*")
-    catch_all: HashMap<String, UdpRoute>,
 }
 
 /// A resolved UDP route
@@ -23,128 +21,84 @@ pub struct UdpRoute {
     pub middlewares: Vec<String>,
     /// Routing rule
     pub rule: UdpRule,
-    /// Priority
-    pub priority: i32,
+    /// Effective priority (explicit non-zero value, else rule length).
+    pub priority: i64,
 }
 
-/// UDP routing rules
-/// Note: UDP doesn't support SNI since there's no TLS handshake
+/// UDP rule: `*` / `HostSNI(`*`)` or `ClientIP(...)`, optionally combined with
+/// `&&`, `||`, `!`. Parsed strictly; anything else is an error.
 #[derive(Clone)]
-pub enum UdpRule {
-    /// Match any datagram (catch-all)
-    CatchAll,
-    /// Match by client IP (CIDR)
-    ClientIP(Vec<IpNetwork>),
-}
+pub struct UdpRule(TcpRule);
 
 impl UdpRule {
-    /// Parse a rule string (Traefik-compatible syntax)
-    pub fn parse(rule: &str) -> Self {
-        let rule = rule.trim();
-
-        // Catch-all
-        if rule == "*" {
-            return UdpRule::CatchAll;
+    /// Parse a UDP rule. An empty rule (Traefik UDP routers have none) matches all.
+    pub fn parse(rule: &str) -> Result<Self, String> {
+        if rule.trim().is_empty() {
+            return Ok(Self(TcpRule::Any));
         }
-
-        // ClientIP rule
-        if let Some(ips) = Self::extract_clientip(rule) {
-            let networks: Vec<IpNetwork> = ips.iter().filter_map(|ip| ip.parse().ok()).collect();
-            if !networks.is_empty() {
-                return UdpRule::ClientIP(networks);
+        let r = TcpRule::parse(rule)?;
+        fn check(r: &TcpRule) -> Result<(), String> {
+            match r {
+                TcpRule::Any | TcpRule::ClientIp(_) => Ok(()),
+                TcpRule::And(a, b) | TcpRule::Or(a, b) => check(a).and(check(b)),
+                TcpRule::Not(a) => check(a),
+                _ => Err("UDP rules only support ClientIP and *".to_string()),
             }
         }
-
-        // Default to catch-all if parsing fails
-        UdpRule::CatchAll
+        check(&r)?;
+        Ok(Self(r))
     }
 
-    /// Extract IP ranges from ClientIP rule
-    fn extract_clientip(rule: &str) -> Option<Vec<String>> {
-        let rule_lower = rule.to_lowercase();
-        if !rule_lower.starts_with("clientip(") {
-            return None;
-        }
-
-        let inner = &rule[9..rule.len().saturating_sub(1)];
-        let ips: Vec<String> = inner
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| {
-                s.trim_matches('`')
-                    .trim_matches('\'')
-                    .trim_matches('"')
-                    .to_string()
-            })
-            .collect();
-
-        if ips.is_empty() { None } else { Some(ips) }
-    }
-
-    /// Check if a datagram matches this rule
+    /// Whether a datagram from `client_addr` matches.
     pub fn matches(&self, client_addr: Option<SocketAddr>) -> bool {
-        match self {
-            UdpRule::CatchAll => true,
-            UdpRule::ClientIP(networks) => {
-                if let Some(addr) = client_addr {
-                    networks.iter().any(|net| net.contains(addr.ip()))
-                } else {
-                    false
-                }
-            }
-        }
+        self.0.matches(&ConnInfo {
+            sni: None,
+            alpn: &[],
+            client_ip: client_addr.map(|a| a.ip()),
+        })
     }
 }
 
 impl UdpRouter {
-    /// Create a new UDP router from configuration
-    pub fn from_config(config: &Config) -> Self {
+    /// Build from configuration. An unparseable rule is an error.
+    pub fn from_config(config: &Config) -> Result<Self, String> {
         let mut routers: HashMap<String, Vec<UdpRoute>> = HashMap::new();
-        let mut catch_all: HashMap<String, UdpRoute> = HashMap::new();
 
         for (name, router_config) in config.udp_routers() {
-            let rule = UdpRule::parse(&router_config.rule);
-            let is_catch_all = matches!(rule, UdpRule::CatchAll);
-
+            let rule = UdpRule::parse(&router_config.rule)
+                .map_err(|e| format!("UDP router '{name}': {e}"))?;
+            let priority = if router_config.priority != 0 {
+                i64::from(router_config.priority)
+            } else {
+                router_config.rule.trim().len() as i64
+            };
             let route = UdpRoute {
                 name: name.clone(),
                 service: router_config.service.clone(),
                 middlewares: router_config.middlewares.clone(),
                 rule,
-                priority: router_config.priority,
+                priority,
             };
 
-            // Determine which entrypoints this router applies to
             let entrypoints = if router_config.entry_points.is_empty() {
-                // If no entrypoints specified, apply to all
                 config.entry_points.keys().cloned().collect()
             } else {
                 router_config.entry_points.clone()
             };
-
             for ep in entrypoints {
-                if is_catch_all {
-                    // Only keep highest priority catch-all per entrypoint
-                    if let Some(existing) = catch_all.get(&ep) {
-                        if route.priority > existing.priority {
-                            catch_all.insert(ep, route.clone());
-                        }
-                    } else {
-                        catch_all.insert(ep, route.clone());
-                    }
-                } else {
-                    routers.entry(ep).or_default().push(route.clone());
-                }
+                routers.entry(ep).or_default().push(route.clone());
             }
         }
 
-        // Sort routers by priority (higher first)
         for routes in routers.values_mut() {
-            routes.sort_by_key(|r| std::cmp::Reverse(r.priority));
+            routes.sort_by(|a, b| {
+                b.priority
+                    .cmp(&a.priority)
+                    .then_with(|| a.name.cmp(&b.name))
+            });
         }
 
-        Self { routers, catch_all }
+        Ok(Self { routers })
     }
 
     /// Match a datagram to a route
@@ -153,34 +107,21 @@ impl UdpRouter {
         entrypoint: &str,
         client_addr: Option<SocketAddr>,
     ) -> Option<&UdpRoute> {
-        // Try specific routers first
-        if let Some(routes) = self.routers.get(entrypoint) {
-            for route in routes {
-                if route.rule.matches(client_addr) {
-                    debug!(
-                        "UDP: Matched route '{}' for entrypoint '{}' (client: {:?})",
-                        route.name, entrypoint, client_addr
-                    );
-                    return Some(route);
-                }
-            }
-        }
-
-        // Fall back to catch-all
-        if let Some(route) = self.catch_all.get(entrypoint) {
-            debug!(
-                "UDP: Using catch-all route '{}' for entrypoint '{}'",
-                route.name, entrypoint
-            );
-            return Some(route);
-        }
-
-        None
+        let route = self
+            .routers
+            .get(entrypoint)?
+            .iter()
+            .find(|r| r.rule.matches(client_addr))?;
+        debug!(
+            "UDP: Matched route '{}' for entrypoint '{}' (client: {:?})",
+            route.name, entrypoint, client_addr
+        );
+        Some(route)
     }
 
     /// Check if this router has any routes for the given entrypoint
     pub fn has_routes_for(&self, entrypoint: &str) -> bool {
-        self.routers.contains_key(entrypoint) || self.catch_all.contains_key(entrypoint)
+        self.routers.get(entrypoint).is_some_and(|r| !r.is_empty())
     }
 }
 
@@ -188,37 +129,32 @@ impl UdpRouter {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_parse_catch_all() {
-        let rule = UdpRule::parse("*");
-        assert!(matches!(rule, UdpRule::CatchAll));
+    fn addr(s: &str) -> Option<SocketAddr> {
+        Some(format!("{s}:1234").parse().unwrap())
     }
 
     #[test]
-    fn test_parse_clientip() {
-        let rule = UdpRule::parse("ClientIP(`192.168.1.0/24`)");
-        if let UdpRule::ClientIP(networks) = rule {
-            assert_eq!(networks.len(), 1);
-        } else {
-            panic!("Expected ClientIP rule");
+    fn rules_parse_strictly() {
+        assert!(UdpRule::parse("*").unwrap().matches(addr("1.1.1.1")));
+        assert!(UdpRule::parse("").unwrap().matches(addr("1.1.1.1")));
+        let r = UdpRule::parse("ClientIP(`192.168.1.0/24`)").unwrap();
+        assert!(r.matches(addr("192.168.1.100")));
+        assert!(!r.matches(addr("10.0.0.1")));
+        assert!(!r.matches(None));
+        for bad in [
+            "ClientIP(`192.168.1.0/33`)",
+            "HostSNI(`a`)",
+            "garbage",
+            "ClientIP(`a`",
+        ] {
+            assert!(UdpRule::parse(bad).is_err(), "{bad}");
         }
     }
 
     #[test]
-    fn test_clientip_match() {
-        let rule = UdpRule::parse("ClientIP(`192.168.1.0/24`)");
-        let addr: SocketAddr = "192.168.1.100:12345".parse().unwrap();
-        assert!(rule.matches(Some(addr)));
-
-        let addr: SocketAddr = "10.0.0.1:12345".parse().unwrap();
-        assert!(!rule.matches(Some(addr)));
-    }
-
-    #[test]
-    fn test_catch_all_always_matches() {
-        let rule = UdpRule::CatchAll;
-        let addr: SocketAddr = "10.0.0.1:12345".parse().unwrap();
-        assert!(rule.matches(Some(addr)));
-        assert!(rule.matches(None));
+    fn negation_and_combination() {
+        let r = UdpRule::parse("ClientIP(`10.0.0.0/8`) && !ClientIP(`10.9.0.0/16`)").unwrap();
+        assert!(r.matches(addr("10.1.1.1")));
+        assert!(!r.matches(addr("10.9.1.1")));
     }
 }

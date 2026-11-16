@@ -52,7 +52,8 @@ A high-performance reverse proxy and load balancer written in Rust with **100% T
 - **Compression**: gzip, brotli, and zstd response compression
 - **IP Filtering**: Allow/deny lists with CIDR support (includes deprecated `ipWhiteList`)
 - **CORS**: Full CORS configuration via headers middleware
-- **Authentication**: Basic auth, digest auth, forward auth, JWT validation
+- **Authentication**: Basic auth, digest auth (htdigest `user:realm:HA1` entries), forward auth, JWT validation
+- **Fail-closed pipeline**: a router referencing a middleware that cannot be built is a configuration error — requests never run with a configured middleware missing
 - **Path Manipulation**: Strip prefix, add prefix, replace path
 - **Error Pages**: Custom error page routing (v0.13.0)
 - **Failover**: Automatic service failover (v0.13.0)
@@ -62,6 +63,32 @@ A high-performance reverse proxy and load balancer written in Rust with **100% T
 - **Metrics**: Prometheus-compatible metrics endpoint
 - **OpenTelemetry**: Distributed tracing with W3C, B3, Jaeger propagation
 - **Admin API**: Runtime inspection dashboard and JSON endpoints
+
+## Upgrading to 2.0
+
+2.0 is a security release. Configuration that used to be silently ignored is now enforced, and
+configuration that used to fail open now fails at load. Check these before upgrading:
+
+- **HTTPS backends are verified.** Self-signed or internal-CA backends need a `serversTransport`
+  with `rootCAs` (or an explicit `insecureSkipVerify: true`). See *Backend TLS*.
+- **Every configured middleware is enforced.** forwardAuth, digestAuth, jwt, chain, inFlightReq,
+  redirectRegex, passTLSClientCert, entrypoint `http.middlewares` and `http.redirections` now apply.
+  An unbuildable middleware is a load error. `buffering` is rejected at load; `compress`, `retry`,
+  `circuitBreaker`, `errors` and `grpcWeb` load with a warning and pass through.
+- **TLS options are enforced** (`clientAuth`, `minVersion`, `cipherSuites`, `sniStrict`). An unknown
+  `clientAuthType` is an error. A TLS entrypoint without certificates fails startup instead of
+  serving plaintext.
+- **basicAuth** accepts only htpasswd hashes (`$apr1$`, `$1$`, `{SHA}`, bcrypt), not plaintext.
+  **digestAuth** users are htdigest `user:realm:HA1`; default realms are `traefik`.
+- **Routing:** default router priority is rule length (Traefik); paths are sanitized before routing
+  (`sanitizePath`, default true); routers with `tls` are not served over plaintext.
+- **IP filters / rate limits:** invalid `sourceRange` is a load error; `rateLimit` honours `period`
+  and `sourceCriterion`.
+- **Traefik key spellings** are accepted: `passTLSClientCert`, `rootCAs`, `disableHTTP2`,
+  `peerCertURI`, `excludedIPs` (old spellings still work). `@file` references work; other
+  providers are rejected.
+
+Run `trafficcop -c config.yaml --validate` against your config before deploying.
 
 ## Quick Start
 
@@ -164,6 +191,11 @@ Rules use Traefik-compatible syntax:
 
 Combine rules with `&&` (AND), `||` (OR), and `!` (NOT).
 
+**Priority** (Traefik semantics): routers are tried highest priority first. If `priority` is unset
+(or `0`), it defaults to the length of the rule string, so more specific rules win
+(`PathPrefix(\`/admin\`)` beats `PathPrefix(\`/\`)`). Ties are broken by router name, so ordering
+is deterministic across restarts.
+
 ### Duration Format
 
 Durations use Go-style format (same as Traefik):
@@ -222,7 +254,45 @@ http:
           interval: "10s"
 ```
 
+### Backend TLS (serversTransports)
+
+HTTPS backends are **verified** against the system trust store (falling back to the bundled Mozilla
+roots when the host has none), exactly like Traefik. For internal CAs or self-signed backends,
+define a `serversTransport` and reference it from the service:
+
+```yaml
+http:
+  serversTransports:
+    internal:
+      rootCAs: ["/etc/trafficcop/internal-ca.pem"]   # replaces the system pool
+      serverName: api.internal                       # SNI + name to verify
+      certificates:                                   # optional client cert (mTLS to backend)
+        - certFile: /etc/trafficcop/client.pem
+          keyFile: /etc/trafficcop/client.key
+      peerCertURI: spiffe://cluster/ns/api            # optional required URI SAN
+      maxIdleConnsPerHost: 200
+      disableHTTP2: false
+      forwardingTimeouts:
+        dialTimeout: 30s
+        responseHeaderTimeout: 60s
+        idleConnTimeout: 90s
+    legacy:
+      insecureSkipVerify: true                        # explicit opt-out, logged at startup
+  services:
+    api:
+      loadBalancer:
+        serversTransport: internal
+        servers:
+          - url: "https://10.0.0.5:8443"
+```
+
+A transport named `default` replaces the built-in default for services that name none.
+
 ### Middlewares
+
+> **Not applied yet:** `compress`, `retry`, `circuitBreaker`, `errors` and `grpcWeb` are accepted
+> (with a startup warning) but requests currently pass through unchanged. `buffering` is rejected
+> at load. All other middleware types are enforced.
 
 ```yaml
 http:
@@ -314,7 +384,18 @@ http:
         fallbackDuration: "30s"
         recoveryDuration: "30s"
 
-    # Chain multiple middlewares
+    # Forward authentication (Authelia, oauth2-proxy, ...)
+    sso:
+      forwardAuth:
+        address: "http://authelia:9091/api/verify"
+        authResponseHeaders: [Remote-User, Remote-Groups]
+
+    # Limit concurrent requests per client IP
+    in-flight:
+      inFlightReq:
+        amount: 100
+
+    # Chain multiple middlewares (nested chains supported; cycles are rejected)
     secure-chain:
       chain:
         middlewares:
@@ -337,6 +418,33 @@ http:
         sourceRange:
           - "10.0.0.0/8"
 ```
+
+### Entrypoint HTTP Options
+
+```yaml
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:              # every request on :80 -> https on websecure's port
+        entryPoint:
+          to: websecure          # entrypoint name or ":port"
+          scheme: https          # default https
+          permanent: true        # 301/308 (false: 302/307); default true
+  websecure:
+    address: ":443"
+    http:
+      tls: {}
+      middlewares: [security-headers, auth@file]   # run before each router's own middlewares
+```
+
+ACME HTTP-01 challenges are still answered on a redirecting entrypoint.
+
+**Path sanitization** (`http.sanitizePath`, default `true`, as in Traefik): before routing, the
+request path is percent-decoded, dot-segments and duplicate slashes are removed, and the result is
+re-encoded canonically. `/%61dmin`, `/public/../admin` and `//admin` all route — and reach the
+backend — as `/admin`. Rules always match the decoded path. Set `sanitizePath: false` on the
+entrypoint's `http` block to forward paths untouched.
 
 ### Entrypoint Security Options (v1.5.0)
 
@@ -458,9 +566,16 @@ tcp:
 
 | Rule | Description | Example |
 |------|-------------|---------|
-| `*` | Catch-all | `rule: "*"` |
-| `HostSNI` | TLS SNI hostname | `HostSNI(\`db.example.com\`)` |
+| `*` / `HostSNI(\`*\`)` | Catch-all (TLS or not) | `rule: "HostSNI(\`*\`)"` |
+| `HostSNI` | TLS SNI hostname (`*.example.com` wildcards allowed) | `HostSNI(\`db.example.com\`)` |
+| `HostSNIRegexp` | TLS SNI regex | `HostSNIRegexp(\`^db-[0-9]+\\.example\\.com$\`)` |
 | `ClientIP` | Client IP/CIDR | `ClientIP(\`10.0.0.0/8\`)` |
+| `ALPN` | ALPN protocol offered by the client | `ALPN(\`postgresql\`)` |
+
+Combine with `&&`, `||`, `!` and parentheses, e.g. `HostSNI(\`*\`) && ClientIP(\`10.0.0.0/8\`)`.
+Rules are parsed strictly: an invalid rule (or invalid CIDR) is a configuration error, never a
+catch-all. Priority follows Traefik (default = rule length, ties by router name). TCP middlewares
+(`ipAllowList`, `ipDenyList`, `inFlightConn`) are enforced when the connection is accepted.
 
 ### UDP Configuration (v0.12.0)
 
@@ -549,8 +664,11 @@ udp:
 
 | Rule | Description | Example |
 |------|-------------|---------|
-| `*` | Catch-all | `rule: "*"` |
-| `ClientIP` | Client IP/CIDR | `ClientIP(\`10.0.0.0/8\`)` |
+| (omitted) / `*` | Catch-all — Traefik UDP routers have no rule | `rule: "*"` |
+| `ClientIP` | Client IP/CIDR (TrafficCop extension; `&&`, `||`, `!` supported) | `ClientIP(\`10.0.0.0/8\`)` |
+
+UDP middlewares (`ipAllowList`, `ipDenyList`, `rateLimit`; TrafficCop extensions) are applied to
+every datagram. Invalid rules or CIDRs are configuration errors.
 
 Note: UDP does not support SNI-based routing since there is no TLS handshake for connection-less protocols.
 

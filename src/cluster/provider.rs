@@ -226,14 +226,9 @@ impl ConfigProviderManager {
 
         let content = provider.fetch().await?;
 
-        // Parse the config
-        let new_config: Config = serde_norway::from_str(&content)
-            .map_err(|e| anyhow::anyhow!("Failed to parse config: {}", e))?;
-
-        // Validate
-        new_config
-            .validate()
-            .map_err(|e| anyhow::anyhow!("Config validation failed: {}", e))?;
+        // Parse, normalize references and validate
+        let new_config = Config::from_yaml_str(&content)
+            .map_err(|e| anyhow::anyhow!("Config rejected: {:#}", e))?;
 
         // Check if config changed
         let current = self.current_config.read().await;
@@ -265,8 +260,7 @@ impl ConfigProviderManager {
         for provider in &self.providers {
             match provider.fetch().await {
                 Ok(content) => {
-                    let config: Config = serde_norway::from_str(&content)?;
-                    config.validate()?;
+                    let config = Config::from_yaml_str(&content)?;
                     *self.current_config.write().await = Some(config.clone());
                     info!("Initial config loaded from {} provider", provider.name());
                     return Ok(config);
