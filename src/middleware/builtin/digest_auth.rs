@@ -16,7 +16,7 @@ const MAX_TRACKED_NONCES: usize = 100_000;
 /// Traefik's digestAuth: users are htdigest entries `user:realm:HA1`.
 ///
 /// Nonces are stateless (timestamp + random, HMAC-signed with a per-process
-/// key) and expire after [`NONCE_TTL_SECS`]. The nonce count is tracked per
+/// key) and expire after five minutes. The nonce count is tracked per
 /// nonce so a captured `Authorization` header cannot be replayed.
 pub struct DigestAuthMiddleware {
     /// `user:realm` -> HA1

@@ -64,6 +64,32 @@ A high-performance reverse proxy and load balancer written in Rust with **100% T
 - **OpenTelemetry**: Distributed tracing with W3C, B3, Jaeger propagation
 - **Admin API**: Runtime inspection dashboard and JSON endpoints
 
+## Upgrading to 2.0
+
+2.0 is a security release. Configuration that used to be silently ignored is now enforced, and
+configuration that used to fail open now fails at load. Check these before upgrading:
+
+- **HTTPS backends are verified.** Self-signed or internal-CA backends need a `serversTransport`
+  with `rootCAs` (or an explicit `insecureSkipVerify: true`). See *Backend TLS*.
+- **Every configured middleware is enforced.** forwardAuth, digestAuth, jwt, chain, inFlightReq,
+  redirectRegex, passTLSClientCert, entrypoint `http.middlewares` and `http.redirections` now apply.
+  An unbuildable middleware is a load error. `buffering` is rejected at load; `compress`, `retry`,
+  `circuitBreaker`, `errors` and `grpcWeb` load with a warning and pass through.
+- **TLS options are enforced** (`clientAuth`, `minVersion`, `cipherSuites`, `sniStrict`). An unknown
+  `clientAuthType` is an error. A TLS entrypoint without certificates fails startup instead of
+  serving plaintext.
+- **basicAuth** accepts only htpasswd hashes (`$apr1$`, `$1$`, `{SHA}`, bcrypt), not plaintext.
+  **digestAuth** users are htdigest `user:realm:HA1`; default realms are `traefik`.
+- **Routing:** default router priority is rule length (Traefik); paths are sanitized before routing
+  (`sanitizePath`, default true); routers with `tls` are not served over plaintext.
+- **IP filters / rate limits:** invalid `sourceRange` is a load error; `rateLimit` honours `period`
+  and `sourceCriterion`.
+- **Traefik key spellings** are accepted: `passTLSClientCert`, `rootCAs`, `disableHTTP2`,
+  `peerCertURI`, `excludedIPs` (old spellings still work). `@file` references work; other
+  providers are rejected.
+
+Run `trafficcop -c config.yaml --validate` against your config before deploying.
+
 ## Quick Start
 
 ### Build
