@@ -166,14 +166,14 @@ impl MiddlewareRegistry {
         if let Some(allow_config) = config.get_ip_allow_list() {
             return Ok(Arc::new(IpAllowWrapper {
                 name,
-                inner: IpAllowListMiddleware::new(allow_config),
+                inner: IpAllowListMiddleware::new(allow_config)?,
             }));
         }
 
         if let Some(deny_config) = &config.ip_deny_list {
             return Ok(Arc::new(IpDenyWrapper {
                 name,
-                inner: IpDenyListMiddleware::new(deny_config),
+                inner: IpDenyListMiddleware::new(deny_config)?,
             }));
         }
 
@@ -431,10 +431,7 @@ impl Middleware for IpAllowWrapper {
         next: Next<'a>,
     ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
-            if self.inner.has_rules()
-                && let Some(ip) = get_client_ip(&req)
-                && !self.inner.is_allowed(ip)
-            {
+            if !self.inner.allows(&req) {
                 let status = StatusCode::from_u16(self.inner.reject_status_code())
                     .unwrap_or(StatusCode::FORBIDDEN);
                 return Ok(error_response(status, "Forbidden"));
@@ -461,10 +458,7 @@ impl Middleware for IpDenyWrapper {
         next: Next<'a>,
     ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
-            if self.inner.has_rules()
-                && let Some(ip) = get_client_ip(&req)
-                && self.inner.is_denied(ip)
-            {
+            if self.inner.denies(&req) {
                 return Ok(error_response(StatusCode::FORBIDDEN, "Forbidden"));
             }
             next.run(req).await

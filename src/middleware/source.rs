@@ -59,6 +59,14 @@ impl SourceExtractor {
         }
     }
 
+    /// Extractor for an optional `ipStrategy` (absent = remote address).
+    pub fn from_ip_strategy_opt(s: Option<&IpStrategy>) -> Result<Self, String> {
+        match s {
+            Some(s) => Self::from_ip_strategy(s),
+            None => Ok(Self::RemoteAddr),
+        }
+    }
+
     fn from_ip_strategy(s: &IpStrategy) -> Result<Self, String> {
         if s.depth > 0 {
             if !s.excluded_ips.is_empty() {

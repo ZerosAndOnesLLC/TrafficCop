@@ -1668,7 +1668,7 @@ pub struct IpStrategy {
     pub depth: u32,
 
     /// IPs to exclude when extracting client IP.
-    #[serde(default)]
+    #[serde(default, rename = "excludedIPs", alias = "excludedIps")]
     pub excluded_ips: Vec<String>,
 
     /// IPv6 subnet mask size for grouping clients.
