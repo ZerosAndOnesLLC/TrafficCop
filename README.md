@@ -165,6 +165,11 @@ Rules use Traefik-compatible syntax:
 
 Combine rules with `&&` (AND), `||` (OR), and `!` (NOT).
 
+**Priority** (Traefik semantics): routers are tried highest priority first. If `priority` is unset
+(or `0`), it defaults to the length of the rule string, so more specific rules win
+(`PathPrefix(\`/admin\`)` beats `PathPrefix(\`/\`)`). Ties are broken by router name, so ordering
+is deterministic across restarts.
+
 ### Duration Format
 
 Durations use Go-style format (same as Traefik):
