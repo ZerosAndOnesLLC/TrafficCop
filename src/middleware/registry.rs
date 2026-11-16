@@ -5,6 +5,7 @@ use super::builtin::{
     JwtMiddleware, RateLimitMiddleware, RedirectSchemeMiddleware, ReplacePathMiddleware,
     ReplacePathRegexMiddleware, StripPrefixMiddleware, StripPrefixRegexMiddleware,
 };
+use super::source::SourceExtractor;
 use super::traffic_wrappers::{
     ContentTypeWrapper, InFlightReqWrapper, PassTlsClientCertWrapper, RedirectRegexWrapper,
 };
@@ -17,7 +18,7 @@ use hyper::header::{CONTENT_TYPE, HeaderValue};
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use rustls::pki_types::CertificateDer;
 use std::collections::{HashMap, HashSet};
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -157,9 +158,15 @@ impl MiddlewareRegistry {
         }
 
         if let Some(rl_config) = &config.rate_limit {
+            let source = SourceExtractor::from_config(rl_config.source_criterion.as_ref())
+                .map_err(|e| format!("rateLimit: {e}"))?;
+            if rl_config.period.is_zero() {
+                return Err("rateLimit: period must be greater than 0".to_string());
+            }
             return Ok(Arc::new(RateLimitWrapper {
                 name,
                 inner: RateLimitMiddleware::new(rl_config.clone()),
+                source,
             }));
         }
 
@@ -306,13 +313,6 @@ pub(super) fn error_response(
         .unwrap()
 }
 
-/// Extract the client IP from the request's [`RequestContext`] extension.
-pub(super) fn get_client_ip(req: &Request<Incoming>) -> Option<IpAddr> {
-    req.extensions()
-        .get::<RequestContext>()
-        .map(|ctx| ctx.remote_addr.ip())
-}
-
 // --- Headers ---
 struct HeadersWrapper {
     name: String,
@@ -388,6 +388,8 @@ impl Middleware for HeadersAndCorsWrapper {
 struct RateLimitWrapper {
     name: String,
     inner: RateLimitMiddleware,
+    /// Bucketing key per Traefik sourceCriterion (remote address by default).
+    source: SourceExtractor,
 }
 
 impl Middleware for RateLimitWrapper {
@@ -401,13 +403,19 @@ impl Middleware for RateLimitWrapper {
         next: Next<'a>,
     ) -> BoxFuture<'a, Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error>> {
         Box::pin(async move {
-            if let Some(ip) = get_client_ip(&req)
-                && !self.inner.is_allowed(ip)
-            {
+            let Some(key) = self.source.extract(&req) else {
                 return Ok(error_response(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "Rate limit exceeded",
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal Server Error",
                 ));
+            };
+            if !self.inner.is_allowed_by_key(&key) {
+                let mut resp = error_response(StatusCode::TOO_MANY_REQUESTS, "Too Many Requests");
+                resp.headers_mut().insert(
+                    hyper::header::RETRY_AFTER,
+                    HeaderValue::from(self.inner.retry_after_secs()),
+                );
+                return Ok(resp);
             }
             next.run(req).await
         })
