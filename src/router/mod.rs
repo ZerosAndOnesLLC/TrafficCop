@@ -40,6 +40,8 @@ pub struct Route {
     pub priority: i64,
     /// Whether this route has been indexed by host (skip in non-host scan)
     host_indexed: bool,
+    /// Router has `tls` configured: Traefik serves it only on TLS connections.
+    tls_only: bool,
 }
 
 impl Router {
@@ -58,6 +60,7 @@ impl Router {
                         middlewares: router_config.middlewares.clone(),
                         priority: effective_priority(router_config.priority, &router_config.rule),
                         host_indexed: false,
+                        tls_only: router_config.tls.is_some(),
                     }),
                     Err(e) => {
                         tracing::error!("Failed to parse rule for router '{}': {}", name, e);
@@ -142,6 +145,7 @@ impl Router {
     }
 
     /// Find the highest-priority route matching the given request attributes.
+    #[allow(clippy::too_many_arguments)]
     pub fn match_request(
         &self,
         entrypoint: &str,
@@ -150,6 +154,7 @@ impl Router {
         query: Option<&str>,
         method: Option<&str>,
         headers: &hyper::HeaderMap,
+        is_tls: bool,
     ) -> Option<&Route> {
         // Get candidate indices for this entrypoint
         let candidates = self
@@ -188,6 +193,10 @@ impl Router {
                 (None, None) => return None,
             };
             let route = &self.routes[next];
+            // A TLS router is never served over plaintext.
+            if route.tls_only && !is_tls {
+                continue;
+            }
             let ep_match =
                 route.entrypoints.is_empty() || route.entrypoints.iter().any(|ep| ep == entrypoint);
             if ep_match && route.matcher.matches(host, path, query, method, headers) {
@@ -225,6 +234,7 @@ mod tests {
             None,
             Some("GET"),
             &hyper::HeaderMap::new(),
+            false,
         )
         .map(|r| r.name.clone())
         .unwrap_or_default()
@@ -269,5 +279,26 @@ mod tests {
         );
         assert_eq!(hit(&r, "A.com", "/api/v1"), "byhost");
         assert_eq!(hit(&r, "b.com", "/api/v1"), "api");
+    }
+
+    #[test]
+    fn tls_routers_are_not_served_over_plaintext() {
+        let r = router(
+            "    secure: {rule: \"Host(`secure.example.com`)\", service: s, tls: {}}\n    plain: {rule: \"PathPrefix(`/`)\", service: s}",
+        );
+        let m = |tls| {
+            r.match_request(
+                "web",
+                Some("secure.example.com"),
+                "/",
+                None,
+                Some("GET"),
+                &hyper::HeaderMap::new(),
+                tls,
+            )
+            .map(|r| r.name.clone())
+        };
+        assert_eq!(m(true).as_deref(), Some("secure"));
+        assert_eq!(m(false).as_deref(), Some("plain"));
     }
 }

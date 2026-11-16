@@ -105,6 +105,7 @@ impl ProxyHandler {
             query,
             Some(method.as_str()),
             req.headers(),
+            is_tls,
         ) {
             Some(route) => route,
             None => {
