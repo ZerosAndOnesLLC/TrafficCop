@@ -62,7 +62,6 @@ sha1_smol = "1"
 # Compression
 flate2 = "1"
 brotli = "9.1"
-async-compression = { version = "0.4", features = ["tokio", "gzip", "brotli"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -83,7 +82,7 @@ bcrypt = "0.19.3"
 serde_norway = "0.9.42"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", features = ["fs", "process"] }
+nix = { version = "0.32", features = ["fs", "process"] }
 
 [dev-dependencies]
 criterion = "0.8"
