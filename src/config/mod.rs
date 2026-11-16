@@ -5,6 +5,7 @@
 
 /// Go-style duration parsing (e.g., "30s", "1m30s", "100ms").
 pub mod duration;
+mod references;
 mod types;
 /// File-system watcher for automatic config reloading on changes.
 pub mod watcher;
@@ -24,10 +25,16 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {:?}", path))?;
+        Self::from_yaml_str(&content)
+    }
 
+    /// Parse, normalize references, and validate a YAML config document.
+    /// Every config source (file, cluster providers) must go through here.
+    pub fn from_yaml_str(content: &str) -> Result<Self> {
         let mut config: Config =
-            serde_norway::from_str(&content).with_context(|| "Failed to parse config file")?;
+            serde_norway::from_str(content).with_context(|| "Failed to parse config file")?;
 
+        config.normalize_references()?;
         config.validate()?;
         config.pre_parse_uris();
 
@@ -213,11 +220,7 @@ impl Config {
 
             // Validate middleware references
             for mw_name in &router.middlewares {
-                // Handle middleware references with @provider suffix (e.g., "auth@file")
-                let mw_name_clean = mw_name.split('@').next().unwrap_or(mw_name);
-                if !self.middlewares().contains_key(mw_name_clean)
-                    && !self.middlewares().contains_key(mw_name)
-                {
+                if !self.middlewares().contains_key(mw_name) {
                     anyhow::bail!(
                         "Router '{}' references non-existent middleware '{}'",
                         name,
@@ -271,10 +274,7 @@ impl Config {
 
             // Validate TCP middleware references
             for mw_name in &router.middlewares {
-                let mw_name_clean = mw_name.split('@').next().unwrap_or(mw_name);
-                if !self.tcp_middlewares().contains_key(mw_name_clean)
-                    && !self.tcp_middlewares().contains_key(mw_name)
-                {
+                if !self.tcp_middlewares().contains_key(mw_name) {
                     anyhow::bail!(
                         "TCP router '{}' references non-existent middleware '{}'",
                         name,
@@ -328,10 +328,7 @@ impl Config {
 
             // Validate UDP middleware references
             for mw_name in &router.middlewares {
-                let mw_name_clean = mw_name.split('@').next().unwrap_or(mw_name);
-                if !self.udp_middlewares().contains_key(mw_name_clean)
-                    && !self.udp_middlewares().contains_key(mw_name)
-                {
+                if !self.udp_middlewares().contains_key(mw_name) {
                     anyhow::bail!(
                         "UDP router '{}' references non-existent middleware '{}'",
                         name,
