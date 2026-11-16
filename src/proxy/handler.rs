@@ -347,7 +347,7 @@ impl ProxyHandler {
                 }
             };
 
-        let proxied_req =
+        let mut proxied_req =
             match Self::build_proxied_request(req, backend_uri, remote_addr, host, is_tls, is_grpc)
             {
                 Ok(r) => r,
@@ -360,6 +360,15 @@ impl ProxyHandler {
                     ));
                 }
             };
+
+        // The client-side protocol says nothing about the backend's: tag the
+        // request for the client actually used, or hyper rejects an HTTP/2
+        // request on an HTTP/1 connection (UserUnsupportedVersion -> 502).
+        *proxied_req.version_mut() = if use_h2 {
+            hyper::Version::HTTP_2
+        } else {
+            hyper::Version::HTTP_11
+        };
 
         // Select client: HTTP/2 for gRPC and h2c backends, HTTP/1.1 otherwise
         let selected_client = if use_h2 {
