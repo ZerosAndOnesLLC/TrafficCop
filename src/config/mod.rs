@@ -196,6 +196,11 @@ impl Config {
             }
         }
 
+        // Every HTTP middleware must be buildable: a router must never run
+        // without a middleware it references.
+        crate::middleware::MiddlewareRegistry::from_config(self.middlewares())
+            .map_err(anyhow::Error::msg)?;
+
         // Validate routers reference valid services
         for (name, router) in self.routers() {
             if !self.services().contains_key(&router.service) {

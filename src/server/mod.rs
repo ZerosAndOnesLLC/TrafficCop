@@ -151,49 +151,54 @@ pub struct SharedState {
 
 impl SharedState {
     /// Build shared state from config without ACME support.
-    pub fn new(config: &Config) -> Self {
+    pub fn new(config: &Config) -> Result<Self> {
         let cert_resolver = build_static_resolver(config);
-        Self {
+        Ok(Self {
             router: ArcSwap::from_pointee(Router::from_config(config)),
             services: ArcSwap::from_pointee(ServiceManager::new(config)),
-            middlewares: ArcSwap::from_pointee(MiddlewareRegistry::from_config(
-                config.middlewares(),
-            )),
+            middlewares: ArcSwap::from_pointee(
+                MiddlewareRegistry::from_config(config.middlewares())
+                    .map_err(anyhow::Error::msg)?,
+            ),
             passive_health: Arc::new(PassiveHealthChecker::new(PassiveHealthConfig::default())),
             connections: ConnectionTracker::new(),
             acme_challenges: Arc::new(RwLock::new(HashMap::new())),
             cert_resolver,
             access_log: AccessLogWriter::new(&config.access_log),
-        }
+        })
     }
 
     /// Create with ACME manager
-    pub fn with_acme(config: &Config, acme_manager: &AcmeManager) -> Self {
-        Self {
+    pub fn with_acme(config: &Config, acme_manager: &AcmeManager) -> Result<Self> {
+        Ok(Self {
             router: ArcSwap::from_pointee(Router::from_config(config)),
             services: ArcSwap::from_pointee(ServiceManager::new(config)),
-            middlewares: ArcSwap::from_pointee(MiddlewareRegistry::from_config(
-                config.middlewares(),
-            )),
+            middlewares: ArcSwap::from_pointee(
+                MiddlewareRegistry::from_config(config.middlewares())
+                    .map_err(anyhow::Error::msg)?,
+            ),
             passive_health: Arc::new(PassiveHealthChecker::new(PassiveHealthConfig::default())),
             connections: ConnectionTracker::new(),
             acme_challenges: acme_manager.get_pending_challenges(),
             cert_resolver: Some(acme_manager.get_resolver()),
             access_log: AccessLogWriter::new(&config.access_log),
-        }
+        })
     }
 
     /// Hot-reload router, services, and middleware from updated config.
-    pub fn reload(&self, config: &Config) {
+    /// On error nothing is swapped and the running config stays active.
+    pub fn reload(&self, config: &Config) -> Result<()> {
+        let new_middlewares =
+            MiddlewareRegistry::from_config(config.middlewares()).map_err(anyhow::Error::msg)?;
         let new_router = Router::from_config(config);
         let new_services = ServiceManager::new(config);
-        let new_middlewares = MiddlewareRegistry::from_config(config.middlewares());
 
         self.router.store(Arc::new(new_router));
         self.services.store(Arc::new(new_services));
         self.middlewares.store(Arc::new(new_middlewares));
 
         info!("Router, services, and middlewares reloaded");
+        Ok(())
     }
 }
 
@@ -209,38 +214,42 @@ pub struct Server {
 
 impl Server {
     /// Create a server with default config path.
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config) -> Result<Self> {
         Self::with_path(config, PathBuf::from("config.yaml"))
     }
 
     /// Create a server with an explicit config file path for hot-reload watching.
-    pub fn with_path(config: Config, config_path: PathBuf) -> Self {
-        let state = Arc::new(SharedState::new(&config));
+    pub fn with_path(config: Config, config_path: PathBuf) -> Result<Self> {
+        let state = Arc::new(SharedState::new(&config)?);
         let config = Arc::new(ArcSwap::from_pointee(config));
         let proxy = Arc::new(ProxyHandler::new());
 
-        Self {
+        Ok(Self {
             config_path,
             config,
             state,
             proxy,
             acme_manager: None,
-        }
+        })
     }
 
     /// Create server with ACME support
-    pub fn with_acme(config: Config, config_path: PathBuf, acme_manager: Arc<AcmeManager>) -> Self {
-        let state = Arc::new(SharedState::with_acme(&config, &acme_manager));
+    pub fn with_acme(
+        config: Config,
+        config_path: PathBuf,
+        acme_manager: Arc<AcmeManager>,
+    ) -> Result<Self> {
+        let state = Arc::new(SharedState::with_acme(&config, &acme_manager)?);
         let config = Arc::new(ArcSwap::from_pointee(config));
         let proxy = Arc::new(ProxyHandler::new());
 
-        Self {
+        Ok(Self {
             config_path,
             config,
             state,
             proxy,
             acme_manager: Some(acme_manager),
-        }
+        })
     }
 
     /// Start all listeners, config watcher, and block until shutdown signal.
@@ -319,11 +328,12 @@ impl Server {
             while let Ok(new_config) = rx.recv().await {
                 info!("Hot reloading configuration...");
 
-                // Update config
+                // Build the new state first; keep the running config on failure.
+                if let Err(e) = state_arc.reload(&new_config) {
+                    error!("Config reload rejected, keeping current config: {}", e);
+                    continue;
+                }
                 config_arc.store(Arc::new(new_config.clone()));
-
-                // Reload router and services
-                state_arc.reload(&new_config);
 
                 // Restart health checks with new services
                 state_arc.services.load().start_health_checks();
@@ -372,8 +382,8 @@ impl Server {
     /// Manually reload configuration (validates before applying).
     pub fn reload_config(&self, config: Config) -> Result<()> {
         config.validate()?;
-        self.config.store(Arc::new(config.clone()));
-        self.state.reload(&config);
+        self.state.reload(&config)?;
+        self.config.store(Arc::new(config));
         info!("Configuration reloaded manually");
         Ok(())
     }

@@ -227,7 +227,28 @@ impl ProxyHandler {
         );
 
         // Resolve middleware chain for this route
-        let mw_instances = middleware_registry.resolve(route_middlewares);
+        // Fail closed: a route never runs with a configured middleware missing.
+        let mw_instances = match middleware_registry.resolve(route_middlewares) {
+            Ok(m) => m,
+            Err(e) => {
+                error!("Route '{}' middleware resolution failed: {}", route_name, e);
+                let response = Self::error_response_maybe_grpc(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal Server Error",
+                    is_grpc,
+                );
+                let entry = AccessLogBuilder::new(remote_addr, &log_method, &log_path, "HTTP/1.1")
+                    .host(log_host.as_deref())
+                    .query(log_query.as_deref())
+                    .user_agent(log_user_agent.as_deref())
+                    .referer(log_referer.as_deref())
+                    .forwarded_for(log_xff.as_deref())
+                    .tls(is_tls)
+                    .finish(response.status().as_u16(), None, None, None, None);
+                access_log.log(&entry);
+                return Ok(response);
+            }
+        };
 
         let response = if mw_instances.is_empty() {
             // No middleware — execute backend forwarding directly

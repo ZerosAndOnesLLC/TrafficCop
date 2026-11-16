@@ -234,18 +234,23 @@ impl JwtMiddleware {
             .unwrap_or_default()
             .as_secs() as i64;
 
-        // Check expiration
-        if let Some(ClaimValue::Number(exp)) = claims.get("exp")
-            && *exp < now
-        {
-            return Err((StatusCode::UNAUTHORIZED, "Token expired".to_string()));
+        // Check expiration. A present-but-non-numeric exp/nbf must not
+        // silently skip the check.
+        match claims.get("exp") {
+            Some(ClaimValue::Number(exp)) if *exp < now => {
+                return Err((StatusCode::UNAUTHORIZED, "Token expired".to_string()));
+            }
+            Some(ClaimValue::Number(_)) | None => {}
+            Some(_) => return Err((StatusCode::UNAUTHORIZED, "Invalid exp claim".to_string())),
         }
 
         // Check not before
-        if let Some(ClaimValue::Number(nbf)) = claims.get("nbf")
-            && *nbf > now
-        {
-            return Err((StatusCode::UNAUTHORIZED, "Token not yet valid".to_string()));
+        match claims.get("nbf") {
+            Some(ClaimValue::Number(nbf)) if *nbf > now => {
+                return Err((StatusCode::UNAUTHORIZED, "Token not yet valid".to_string()));
+            }
+            Some(ClaimValue::Number(_)) | None => {}
+            Some(_) => return Err((StatusCode::UNAUTHORIZED, "Invalid nbf claim".to_string())),
         }
 
         // Check issuer

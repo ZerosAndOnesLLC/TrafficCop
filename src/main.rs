@@ -129,15 +129,15 @@ async fn main() -> Result<()> {
         match builder.build().await {
             Ok(acme_manager) => {
                 info!("ACME manager initialized successfully");
-                Server::with_acme(config, args.config, acme_manager)
+                Server::with_acme(config, args.config, acme_manager)?
             }
             Err(e) => {
                 error!("Failed to initialize ACME: {}. Starting without ACME.", e);
-                Server::with_path(config, args.config)
+                Server::with_path(config, args.config)?
             }
         }
     } else {
-        Server::with_path(config, args.config)
+        Server::with_path(config, args.config)?
     };
 
     info!("Starting TrafficCop server");

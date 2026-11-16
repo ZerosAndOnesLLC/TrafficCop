@@ -52,7 +52,8 @@ A high-performance reverse proxy and load balancer written in Rust with **100% T
 - **Compression**: gzip, brotli, and zstd response compression
 - **IP Filtering**: Allow/deny lists with CIDR support (includes deprecated `ipWhiteList`)
 - **CORS**: Full CORS configuration via headers middleware
-- **Authentication**: Basic auth, digest auth, forward auth, JWT validation
+- **Authentication**: Basic auth, digest auth (htdigest `user:realm:HA1` entries), forward auth, JWT validation
+- **Fail-closed pipeline**: a router referencing a middleware that cannot be built is a configuration error — requests never run with a configured middleware missing
 - **Path Manipulation**: Strip prefix, add prefix, replace path
 - **Error Pages**: Custom error page routing (v0.13.0)
 - **Failover**: Automatic service failover (v0.13.0)
@@ -224,6 +225,10 @@ http:
 
 ### Middlewares
 
+> **Not applied yet:** `compress`, `retry`, `circuitBreaker`, `errors` and `grpcWeb` are accepted
+> (with a startup warning) but requests currently pass through unchanged. `buffering` is rejected
+> at load. All other middleware types are enforced.
+
 ```yaml
 http:
   middlewares:
@@ -314,7 +319,18 @@ http:
         fallbackDuration: "30s"
         recoveryDuration: "30s"
 
-    # Chain multiple middlewares
+    # Forward authentication (Authelia, oauth2-proxy, ...)
+    sso:
+      forwardAuth:
+        address: "http://authelia:9091/api/verify"
+        authResponseHeaders: [Remote-User, Remote-Groups]
+
+    # Limit concurrent requests per client IP
+    in-flight:
+      inFlightReq:
+        amount: 100
+
+    # Chain multiple middlewares (nested chains supported; cycles are rejected)
     secure-chain:
       chain:
         middlewares:

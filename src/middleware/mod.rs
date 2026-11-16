@@ -1,8 +1,12 @@
 //! Middleware framework for the reverse proxy request/response pipeline.
 
+mod auth_wrappers;
 pub mod builtin;
 mod chain;
+mod client_cert;
 pub mod registry;
+pub mod source;
+mod traffic_wrappers;
 
 /// Core built-in middleware types re-exported for convenience.
 pub use builtin::{

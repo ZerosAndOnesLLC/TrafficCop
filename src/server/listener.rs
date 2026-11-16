@@ -210,10 +210,19 @@ impl Listener {
                     // TLS connection
                     match acceptor.accept(stream).await {
                         Ok(tls_stream) => {
+                            let client_certs = tls_stream
+                                .get_ref()
+                                .1
+                                .peer_certificates()
+                                .filter(|c| !c.is_empty())
+                                .map(|c| {
+                                    Arc::new(c.iter().map(|d| d.clone().into_owned()).collect())
+                                });
                             let io = TokioIo::new(tls_stream);
                             Self::serve_connection(
                                 io,
                                 remote_addr,
+                                client_certs,
                                 Arc::clone(&entrypoint_name),
                                 Arc::clone(&state),
                                 proxy,
@@ -234,6 +243,7 @@ impl Listener {
                     Self::serve_connection(
                         io,
                         remote_addr,
+                        None,
                         entrypoint_name,
                         Arc::clone(&state),
                         proxy,
@@ -255,6 +265,7 @@ impl Listener {
     async fn serve_connection<I>(
         io: I,
         remote_addr: SocketAddr,
+        client_certs: Option<Arc<Vec<rustls::pki_types::CertificateDer<'static>>>>,
         entrypoint_name: Arc<str>,
         state: Arc<SharedState>,
         proxy: Arc<ProxyHandler>,
@@ -271,6 +282,7 @@ impl Listener {
             let ep = Arc::clone(&entrypoint_name);
             let access_log = access_log.clone();
             let forwarded_trust = Arc::clone(&forwarded_trust);
+            let client_certs = client_certs.clone();
 
             async move {
                 // Strip forwarded headers from untrusted peers so downstream
@@ -321,6 +333,7 @@ impl Listener {
                 req.extensions_mut().insert(RequestContext {
                     remote_addr,
                     is_tls,
+                    client_certs,
                 });
 
                 // Load current router, services, and middlewares (supports hot reload)

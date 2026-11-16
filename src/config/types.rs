@@ -1477,7 +1477,12 @@ pub struct MiddlewareConfig {
     pub in_flight_req: Option<InFlightReqConfig>,
 
     /// Pass TLS client certificate middleware.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "passTLSClientCert",
+        alias = "passTlsClientCert"
+    )]
     pub pass_tls_client_cert: Option<PassTlsClientCertConfig>,
 
     /// Content-Type auto-detection middleware.
@@ -1506,6 +1511,42 @@ pub struct MiddlewareConfig {
 }
 
 impl MiddlewareConfig {
+    /// Names of every middleware type set on this definition. Traefik requires
+    /// exactly one per middleware.
+    pub fn configured_types(&self) -> Vec<&'static str> {
+        [
+            ("rateLimit", self.rate_limit.is_some()),
+            ("ipAllowList", self.ip_allow_list.is_some()),
+            ("ipWhiteList", self.ip_white_list.is_some()),
+            ("ipDenyList", self.ip_deny_list.is_some()),
+            ("headers", self.headers.is_some()),
+            ("basicAuth", self.basic_auth.is_some()),
+            ("digestAuth", self.digest_auth.is_some()),
+            ("forwardAuth", self.forward_auth.is_some()),
+            ("compress", self.compress.is_some()),
+            ("retry", self.retry.is_some()),
+            ("circuitBreaker", self.circuit_breaker.is_some()),
+            ("redirectScheme", self.redirect_scheme.is_some()),
+            ("redirectRegex", self.redirect_regex.is_some()),
+            ("stripPrefix", self.strip_prefix.is_some()),
+            ("stripPrefixRegex", self.strip_prefix_regex.is_some()),
+            ("addPrefix", self.add_prefix.is_some()),
+            ("replacePath", self.replace_path.is_some()),
+            ("replacePathRegex", self.replace_path_regex.is_some()),
+            ("chain", self.chain.is_some()),
+            ("buffering", self.buffering.is_some()),
+            ("inFlightReq", self.in_flight_req.is_some()),
+            ("passTLSClientCert", self.pass_tls_client_cert.is_some()),
+            ("contentType", self.content_type.is_some()),
+            ("grpcWeb", self.grpc_web.is_some()),
+            ("jwt", self.jwt.is_some()),
+            ("errors", self.errors.is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(n, set)| set.then_some(n))
+        .collect()
+    }
+
     /// Get the middleware type name
     pub fn middleware_type(&self) -> &'static str {
         if self.rate_limit.is_some() {
